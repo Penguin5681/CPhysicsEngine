@@ -13,6 +13,7 @@ CMakeUserPresets.json
 *.dll
 *.o
 *.obj
+*.txt
 
 **/CMakeFiles/
 CMakeCache.txt

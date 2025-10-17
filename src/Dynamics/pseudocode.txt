@@ -1,0 +1,33 @@
+INCLUDE "core/Vector3.h"
+INCLUDE "dynamics/RigidBody.h"
+INCLUDE "dynamics/PhysicsWorld.h"
+// For printing to console
+INCLUDE <iostream>
+
+FUNCTION main():
+    // 1. Setup Simulation
+    DEFINE gravity = Vector3(0, -9.81, 0)
+    DEFINE world = NEW PhysicsWorld(gravity)
+    DEFINE timeStep = 1.0 / 60.0 // Simulate 60 FPS
+    DEFINE simulationDuration = 5.0 // Run for 5 seconds
+
+    // 2. Create an object
+    DEFINE ball = NEW RigidBody()
+    ball.position = Vector3(0, 100, 0) // Start 100 meters up
+    ball.velocity = Vector3(10, 0, 0)  // Give it some initial horizontal speed
+    ball.inverseMass = 1.0 / 5.0      // 5 kg mass
+
+    // 3. Add the object to the world
+    world.addBody(&ball)
+
+    // 4. Run the Simulation Loop
+    DEFINE totalTime = 0.0
+    WHILE totalTime < simulationDuration:
+        PRINT "Time: " + totalTime + "s, Position: (" + ball.position.x + ", " + ball.position.y + ", " + ball.position.z + ")"
+
+        world.step(timeStep)
+        totalTime += timeStep
+    END WHILE
+
+    RETURN 0
+END FUNCTION

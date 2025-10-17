@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(SFML 2.5 COMPONENTS graphics window system REQUIRED)
 
-add_executable(CPhysicsEngine main.cpp)
+add_executable(CPhysicsEngine main.cpp
+        src/Core/Vector3.h
+        src/Dynamics/RigidBody.h
+        src/Dynamics/PhysicsWorld.h)
 
 target_link_libraries(CPhysicsEngine sfml-graphics sfml-window sfml-system)

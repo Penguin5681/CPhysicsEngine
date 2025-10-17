@@ -1,27 +1,31 @@
-#include <SFML/Graphics.hpp>
+#include "./src/Core/Vector3.h"
+#include "./src/Dynamics/PhysicsWorld.h"
+#include "./src/Dynamics/RigidBody.h"
+#include <iostream>
 
-int main() {
-	sf::RenderWindow window(sf::VideoMode(800, 600), "C++ Physics Engine");
+int main(int argc, char* argv[]) {
+	Vector3 gravity = Vector3(0, -9.81, 0);
+	PhysicsWorld world(gravity);
+	float timeStep = 1.0 / 60.0; // this would be 60 FPS simulation
+	float simulationDuration = 5.0; // run this thing for 5 seconds
 
-	sf::CircleShape circle(50.f);
-	circle.setFillColor(sf::Color::Green);
+	auto* ball = new RigidBody();
+	ball->position = Vector3(0, 100, 0);
+	ball->velocity = Vector3(10, 0, 0);
+	ball->inverseMass = 1.0 / 5.0;
 
-	circle.setPosition(800.f / 2 - circle.getRadius(), 600.f / 2 - circle.getRadius());
+	world.addBody(ball);
 
-	while (window.isOpen()) {
-		sf::Event event;
-		while (window.pollEvent(event)) {
-			if (event.type == sf::Event::Closed) {
-				window.close();
-			}
-		}
+	float totalTime = 0.0;
+	while (totalTime < simulationDuration) {
+		std::cout << "Time: " << totalTime << "s, Position: (" << ball->position.x << ", " << ball->position.y << ", " <<
+			ball->position.z << ")" << std::endl;
 
-		window.clear(sf::Color::Black);
-
-		window.draw(circle);
-
-		window.display();
+		world.step(timeStep);
+		totalTime += timeStep;
 	}
+
+	delete ball;
 
 	return 0;
 }
