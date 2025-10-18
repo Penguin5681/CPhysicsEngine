@@ -1,13 +1,49 @@
-// Updates the orientation quaternion by the angular velocity for a given duration
-        FUNCTION updateByAngularVelocity(Vector3 angularVelocity, float dt)
-            // Create a temporary "pure" quaternion from the angular velocity
-            DEFINE rotationQuat = Quaternion(0,
-                                             angularVelocity.x * dt,
-                                             angularVelocity.y * dt,
-                                             angularVelocity.z * dt)
+INCLUDE "..." // All necessary headers
+INCLUDE <iostream>
+INCLUDE <iomanip> // For formatting
 
-            // Multiply our current orientation by this new rotation
-            // *this = *this * rotationQuat
-            // This is a simplified integration. We'll refine it later.
-            // A more correct way is: *this += 0.5 * rotationQuat * (*this)
-        END FUNCTION
+FUNCTION main():
+    // 1. Setup Simulation
+    DEFINE world = NEW PhysicsWorld(Vector3(0, 0, 0)) // Zero gravity
+    DEFINE timeStep = 1.0 / 60.0
+    DEFINE simulationDuration = 5.0
+
+    // 2. Create a "plank" object
+    DEFINE plank = NEW RigidBody()
+    DEFINE mass = 1.0
+    plank.inverseMass = 1.0 / mass
+    plank.position = Vector3(0, 0, 0)
+    // Make it long and thin: 1m wide, 10m high, 1m deep
+    plank.inverseInertiaTensor.setInverseInertiaTensorCuboid(mass, Vector3(1, 10, 1))
+
+    world.addBody(plank)
+
+    // 3. Define the "kick"
+    // A force of 10 Newtons along the positive X-axis
+    DEFINE kickForce = Vector3(10.0, 0.0, 0.0)
+    // Apply the kick at the "top" of the plank (5m above its center)
+    DEFINE kickPoint = Vector3(0.0, 5.0, 0.0)
+
+    // 4. Run Simulation
+    DEFINE totalTime = 0.0
+    PRINT "--- Kicking a plank off-center ---"
+    PRINT "Applying force (10,0,0) at point (0,5,0)"
+
+    WHILE totalTime < simulationDuration:
+        // We only apply the force ONCE, like a single kick
+        IF totalTime == 0.0:
+            plank.addForceAtPoint(kickForce, kickPoint)
+        END IF
+
+        // Print the state
+        PRINT "Time: " + totalTime +
+              " | Pos: (" + plank.position.x + ", " + plank.position.y + ")" +
+              " | AngVel.z: " + plank.angularVelocity.z
+
+        world.step(timeStep)
+        totalTime += timeStep
+    END WHILE
+
+    delete plank
+    RETURN 0
+END FUNCTION

@@ -50,6 +50,16 @@ public:
 		clearAccumulatedTorque();
 	}
 
+	void addForceAtPoint(const Vector3 force, const Vector3 worldPoint) {
+		this->addForce(force);
+
+		// r is the lever-arm vector
+		const Vector3 r = worldPoint - this->position;
+		const Vector3 torque = r.cross(force);
+
+		this->addTorque(torque);
+	}
+
 	// delta-time denotes change over the simulation step
 	void integrate(float dt) {
 		if (inverseMass <= 0.0) {
