@@ -1,49 +1,76 @@
-INCLUDE "..." // All necessary headers
-INCLUDE <iostream>
-INCLUDE <iomanip> // For formatting
+CLASS PhysicsWorld:
+    // ... all existing code ...
 
-FUNCTION main():
-    // 1. Setup Simulation
-    DEFINE world = NEW PhysicsWorld(Vector3(0, 0, 0)) // Zero gravity
-    DEFINE timeStep = 1.0 / 60.0
-    DEFINE simulationDuration = 5.0
+    // MODIFIED: detectCollisions() must now calculate the contact point
+    PRIVATE:
+        FUNCTION void detectCollisions()
+            // ... in the N-squared loop ...
+            IF dist < totalRadius:
+                // ... normal and penetration ...
 
-    // 2. Create a "plank" object
-    DEFINE plank = NEW RigidBody()
-    DEFINE mass = 1.0
-    plank.inverseMass = 1.0 / mass
-    plank.position = Vector3(0, 0, 0)
-    // Make it long and thin: 1m wide, 10m high, 1m deep
-    plank.inverseInertiaTensor.setInverseInertiaTensorCuboid(mass, Vector3(1, 10, 1))
+                // NEW: Calculate contact point
+                // For two spheres, it's halfway between them along the collision normal
+                DEFINE Vector3 contact = body1->position + normal * (body1->shape->radius - penetration / 2.0f)
 
-    world.addBody(plank)
+                collisions.push_back(CollisionManifold(body1, body2, normal, penetration, contact))
+                // ... print statement ...
+            END IF
+        END FUNCTION
 
-    // 3. Define the "kick"
-    // A force of 10 Newtons along the positive X-axis
-    DEFINE kickForce = Vector3(10.0, 0.0, 0.0)
-    // Apply the kick at the "top" of the plank (5m above its center)
-    DEFINE kickPoint = Vector3(0.0, 5.0, 0.0)
+    // HEAVILY MODIFIED: The full, correct impulse resolution
+    PRIVATE:
+        FUNCTION void resolveCollisions()
+            FOR EACH manifold IN collisions:
+                RigidBody* A = manifold.bodyA
+                RigidBody* B = manifold.bodyB
+                Vector3 normal = manifold.contactNormal
+                Vector3 contactPoint = manifold.contactPoint
 
-    // 4. Run Simulation
-    DEFINE totalTime = 0.0
-    PRINT "--- Kicking a plank off-center ---"
-    PRINT "Applying force (10,0,0) at point (0,5,0)"
+                // --- (1) Calculate all the vectors from center of mass to contact point ---
+                DEFINE Vector3 rA = contactPoint - A->position
+                DEFINE Vector3 rB = contactPoint - B->position
 
-    WHILE totalTime < simulationDuration:
-        // We only apply the force ONCE, like a single kick
-        IF totalTime == 0.0:
-            plank.addForceAtPoint(kickForce, kickPoint)
-        END IF
+                // --- (2) Calculate relative velocity AT THE CONTACT POINT ---
+                // v = v_linear + v_angular
+                // v_angular = angularVelocity x r
+                DEFINE Vector3 velA = A->velocity + A->angularVelocity.cross(rA)
+                DEFINE Vector3 velB = B->velocity + B->angularVelocity.cross(rB)
+                DEFINE Vector3 relVel = velB - velA
 
-        // Print the state
-        PRINT "Time: " + totalTime +
-              " | Pos: (" + plank.position.x + ", " + plank.position.y + ")" +
-              " | AngVel.z: " + plank.angularVelocity.z
+                // ... (as before) ...
+                DEFINE float velAlongNormal = relVel.dot(normal)
+                IF velAlongNormal > 0.0 THEN CONTINUE
+                DEFINE float e = min(A->restitution, B->restitution)
 
-        world.step(timeStep)
-        totalTime += timeStep
-    END WHILE
+                // --- (3) The FULL impulse formula (with rotation) ---
+                // This is the hardest part of any physics engine.
 
-    delete plank
-    RETURN 0
-END FUNCTION
+                // a) Calculate the rotational "mass" part
+                DEFINE Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(normal))).cross(rA)
+                DEFINE Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(normal))).cross(rB)
+
+                // b) The full denominator
+                DEFINE float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(normal)
+
+                // c) Calculate the impulse scalar j
+                DEFINE float j = -(1.0f + e) * velAlongNormal
+                j /= denominator // <-- THIS IS THE FIX FOR THE "SUPER-BOUNCE"
+
+                // --- (4) Apply linear AND angular impulse ---
+                DEFINE Vector3 impulse = normal * j
+                A->velocity -= impulse * A->inverseMass
+                A->addTorque(-(rA.cross(impulse))) // Apply angular impulse
+
+                B->velocity += impulse * B->inverseMass
+                B->addTorque(rB.cross(impulse)) // Apply angular impulse
+
+                // --- (5) Positional Correction (The "Sinking" fix) ---
+                // We push the objects apart based on penetration depth
+                DEFINE float percent = 0.2f // Usually 20-80%
+                DEFINE float slop = 0.01f  // A small buffer
+                DEFINE Vector3 correction = normal * (max(penetration - slop, 0.0f) / (A->inverseMass + B->inverseMass)) * percent
+
+                A->position -= correction * A->inverseMass
+                B->position += correction * B->inverseMass
+            END FOR
+        END FUNCTION

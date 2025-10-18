@@ -11,6 +11,8 @@ add_executable(CPhysicsEngine main.cpp
         src/Dynamics/RigidBody.h
         src/Dynamics/PhysicsWorld.h
         src/Core/Quaternion.h
-        src/Core/Matrix3x3.h)
+        src/Core/Matrix3x3.h
+        src/Collision/BoundingSphere.h
+        src/Collision/CollisionManifold.h)
 
 target_link_libraries(CPhysicsEngine sfml-graphics sfml-window sfml-system)

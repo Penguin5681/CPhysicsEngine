@@ -10,6 +10,7 @@
 #include "../Core/Vector3.h"
 #include "../Core/Quaternion.h"
 #include "../Core/Matrix3x3.h"
+#include "../Collision/BoundingSphere.h"
 
 class RigidBody {
 public:
@@ -22,12 +23,16 @@ public:
 	Vector3 angularVelocity;
 	Matrix3x3 inverseInertiaTensor;
 
+	BoundingSphere* shape;
+
+	float restitution; // this will range between 0.0 to 1.0 inclusive
+
 private:
 	Vector3 accumulatedForces;
 	Vector3 accumulatedTorque;
 
 public:
-	RigidBody() : orientation(1, 0, 0,0) {}
+	RigidBody() : orientation(1, 0, 0,0), shape(nullptr), restitution(0.7f) {}
 
 	void addForce(const Vector3 force) {
 		accumulatedForces += force;

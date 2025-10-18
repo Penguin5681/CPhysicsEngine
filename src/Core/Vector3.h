@@ -69,6 +69,10 @@ public:
 		return std::sqrt((x * x) + (y * y) + (z * z));
 	}
 
+	[[nodiscard]] float magnitudeSquared() const {
+		return (x * x) + (y * y) + (z * z);
+	}
+
 	[[nodiscard]] Vector3 normalized() const {
 		float vec3Magnitude = magnitude();
 		if (vec3Magnitude == 0.0f) {
