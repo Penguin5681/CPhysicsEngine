@@ -8,6 +8,8 @@
 #define CPHYSICSENGINE_RIGIDBODY_H
 
 #include "../Core/Vector3.h"
+#include "../Core/Quaternion.h"
+#include "../Core/Matrix3x3.h"
 
 class RigidBody {
 public:
@@ -16,18 +18,36 @@ public:
 	Vector3 velocity;
 	Vector3 acceleration;
 
+	Quaternion orientation;
+	Vector3 angularVelocity;
+	Matrix3x3 inverseInertiaTensor;
+
 private:
 	Vector3 accumulatedForces;
+	Vector3 accumulatedTorque;
 
 public:
-	RigidBody() = default;
+	RigidBody() : orientation(1, 0, 0,0) {}
 
-	void addForce(Vector3 force) {
+	void addForce(const Vector3 force) {
 		accumulatedForces += force;
+	}
+
+	void addTorque(const Vector3 torque) {
+		accumulatedTorque += torque;
 	}
 
 	void clearAccumulatedForces() {
 		accumulatedForces = Vector3(0, 0, 0);
+	}
+
+	void clearAccumulatedTorque() {
+		accumulatedTorque = Vector3(0, 0, 0);
+	}
+
+	void clearAccumulators() {
+		clearAccumulatedForces();
+		clearAccumulatedTorque();
 	}
 
 	// delta-time denotes change over the simulation step
@@ -36,10 +56,19 @@ public:
 			return;
 		}
 
+		// usual linear integration
 		acceleration = accumulatedForces * inverseMass;
 		velocity += acceleration * dt;
 		position += velocity * dt;
-		clearAccumulatedForces();
+
+		// new angular integration
+		Vector3 angularAcceleration = inverseInertiaTensor.transform(accumulatedTorque);
+		angularVelocity += angularAcceleration * dt;
+
+		orientation.updateByAngularVelocity(angularVelocity, dt);
+		orientation.normalize();
+
+		clearAccumulators();
 	}
 };
 
