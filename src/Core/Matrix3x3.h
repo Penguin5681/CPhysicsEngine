@@ -33,6 +33,14 @@ public:
 		);
 	}
 
+	[[nodiscard]] Vector3 transformTranspose(const Vector3& vector) const {
+		return Vector3(
+			data[0] * vector.x + data[3] * vector.y + data[6] * vector.z,
+			data[1] * vector.x + data[4] * vector.y + data[7] * vector.z,
+			data[2] * vector.x + data[5] * vector.y + data[8] * vector.z
+		);
+	}
+
 	void setInverseInertiaTensorCuboid(const float mass, const Vector3 dimension) {
 		const float ix = 1.0f / 12.0f * mass * (dimension.y * dimension.y + dimension.z * dimension.z);
 		const float iy = 1.0f / 12.0f * mass * (dimension.x * dimension.x + dimension.z * dimension.z);
@@ -70,6 +78,10 @@ public:
 		data[6] = 2.0f * (xz - sy);
 		data[7] = 2.0f * (yz + sx);
 		data[8] = 1.0f - 2.0f * (xx + yy);
+	}
+
+	[[nodiscard]] Vector3 getColumn(int col) const {
+		return Vector3(data[col], data[col + 3], data[col + 6]);
 	}
 };
 

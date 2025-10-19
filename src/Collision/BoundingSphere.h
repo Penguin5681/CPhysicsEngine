@@ -7,19 +7,16 @@
 
 #pragma once
 #include "../Core/Vector3.h"
+#include "CollisionShape.h"
 
-class BoundingSphere {
+class BoundingSphere : public CollisionShape{
 public:
 	float radius;
 
 	BoundingSphere(const float radius) : radius(radius) {}
 
-	bool overlaps(const Vector3 thisPosition, const Vector3 otherPosition, BoundingSphere* other) const {
-		const float distanceSquared = (thisPosition - otherPosition).magnitudeSquared();
-		const float totalRadius = this->radius + other->radius;
-		const float totalRadiusSquared = totalRadius * totalRadius;
-
-		return distanceSquared < totalRadiusSquared;
+	ShapeType getType() const override {
+		return SPHERE;
 	}
 };
 

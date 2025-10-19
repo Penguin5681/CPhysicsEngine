@@ -1,65 +1,89 @@
 #include "./src/Core/Vector3.h"
-	#include "./src/Dynamics/PhysicsWorld.h"
-	#include "./src/Dynamics/RigidBody.h"
-	#include "./src/Collision/BoundingSphere.h"
-	#include <iostream>
-	#include <iomanip>
+#include "./src/Core/Quaternion.h" // <-- Need this for rotation
+#include "./src/Dynamics/PhysicsWorld.h"
+#include "./src/Dynamics/RigidBody.h"
+#include "./src/Collision/BoundingSphere.h" // <-- Need Sphere
+#include "./src/Collision/BoundingBox.h"    // <-- Need Box
+#include <iostream>
+#include <iomanip>
+#include <cmath> // For M_PI
 
-	int main() {
-	    // Create a physics world with no gravity
-	    Vector3 gravity = Vector3(0, 0, 0);
-	    PhysicsWorld world(gravity);
+// Define PI if not available (Windows)
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
-	    constexpr float timeStep = 1.0f / 60.0f; // 60 FPS
-	    constexpr float simulationDuration = 3.0f; // 3 seconds simulation
+int main() {
+    // 1. Setup Simulation with gravity
+    Vector3 gravity = Vector3(0.0f, -9.81f, 0.0f);
+    PhysicsWorld world(gravity);
 
-	    // Create the first ball
-	    auto* ball1 = new RigidBody();
-	    ball1->position = Vector3(-5.0f, 0.0f, 0.0f); // Start left of origin
-	    ball1->velocity = Vector3(2.0f, 0.0f, 0.0f);  // Moving right
-	    ball1->inverseMass = 1.0f; // 1kg ball
+    constexpr float timeStep = 1.0f / 60.0f;
+    constexpr float simulationDuration = 6.0f;
 
-	    // Create the second ball
-	    auto* ball2 = new RigidBody();
-	    ball2->position = Vector3(5.0f, 0.0f, 0.0f); // Start right of origin
-	    ball2->velocity = Vector3(-2.0f, 0.0f, 0.0f); // Moving left
-	    ball2->inverseMass = 1.0f; // 1kg ball
+    // 2. Create the "Ramp" (a rotated box)
+    auto* rampBody = new RigidBody();
+    rampBody->position = Vector3(0.0f, -5.0f, 0.0f);
+    rampBody->inverseMass = 0.0f; // Immovable
+    rampBody->restitution = 0.5f;
 
-	    // Create collision shapes for the balls
-	    auto* sphere1 = new BoundingSphere(1.0f); // 1m radius
-	    auto* sphere2 = new BoundingSphere(1.0f); // 1m radius
+    // Create a long, flat box shape
+    auto* rampShape = new BoundingBox(Vector3(20.0f, 1.0f, 20.0f));
+    rampBody->shape = rampShape;
+    rampBody->inverseInertiaTensor.setInverseInertiaTensorCuboid(1.0f, Vector3(40.0f, 2.0f, 40.0f));
 
-	    // Assign shapes to the rigid bodies
-	    ball1->shape = sphere1;
-	    ball2->shape = sphere2;
+    // --- Give the ramp its rotation ---
+    // Rotate it 20 degrees "up" around the Z-axis
+    float angle = 20.0f * (float)M_PI / 180.0f;
+    Vector3 axis(0.0f, 0.0f, 1.0f);
+    rampBody->orientation = Quaternion(cosf(angle / 2.0f),
+                                       axis.x * sinf(angle / 2.0f),
+                                       axis.y * sinf(angle / 2.0f),
+                                       axis.z * sinf(angle / 2.0f));
 
-	    // Add bodies to the world
-	    world.addBody(ball1);
-	    world.addBody(ball2);
+    // 3. Create the "Ball"
+    auto* ballBody = new RigidBody();
+    ballBody->position = Vector3(-10.0f, 10.0f, 0.0f); // Start high and to the left
+    ballBody->inverseMass = 1.0f; // 1kg mass
+    ballBody->restitution = 0.5f;
 
-	    // Run simulation
-	    float totalTime = 0.0f;
-	    std::cout << "--- Collision Detection Test ---" << std::endl;
-	    std::cout << "Two balls moving toward each other" << std::endl;
-	    std::cout << "----------------------------------" << std::endl;
+    auto* ballShape = new BoundingSphere(1.0f); // 1m radius
+    ballBody->shape = ballShape;
+    // (Inertia tensor for a sphere is different, but our cuboid one is a fine approximation for now)
+    ballBody->inverseInertiaTensor.setInverseInertiaTensorCuboid(1.0f, Vector3(2.0f, 2.0f, 2.0f));
 
-	    while (totalTime < simulationDuration) {
-	        std::cout << "Time: " << std::fixed << std::setprecision(4) << totalTime
-	                  << " | Ball 1 Pos: (" << ball1->position.x << ", " << ball1->position.y << ", " << ball1->position.z << ")"
-	                  << " | Ball 2 Pos: (" << ball2->position.x << ", " << ball2->position.y << ", " << ball2->position.z << ")"
-	                  << std::endl;
 
-	        world.step(timeStep);
-	        totalTime += timeStep;
-	    }
+    // 4. Add bodies to the world
+    world.addBody(rampBody);
+    world.addBody(ballBody);
 
-	    std::cout << "Simulation complete" << std::endl;
+    // 5. Run the Simulation Loop
+    float totalTime = 0.0;
 
-	    // Cleanup
-	    delete sphere1;
-	    delete sphere2;
-	    delete ball1;
-	    delete ball2;
+    std::cout << std::fixed << std::setprecision(4);
+    std::cout << "--- Sphere-on-Box (Ramp) Test ---" << std::endl;
+    std::cout << "---------------------------------" << std::endl;
 
-	    return 0;
-	}
+    while (totalTime < simulationDuration) {
+        // Print the state of the falling ball
+        std::cout << "Time: " << std::setw(6) << totalTime << "s, "
+                  << "Ball Position: ("
+                  << std::setw(8) << ballBody->position.x << ", "
+                  << std::setw(8) << ballBody->position.y << ", "
+                  << std::setw(8) << ballBody->position.z << ")" << std::endl;
+
+        world.step(timeStep);
+
+        totalTime += timeStep;
+    }
+
+    std::cout << "--- Test Complete ---" << std::endl;
+
+    // 6. Cleanup
+    delete rampShape;
+    delete ballShape;
+    delete rampBody;
+    delete ballBody;
+
+    return 0;
+}

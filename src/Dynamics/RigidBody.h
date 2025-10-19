@@ -23,9 +23,11 @@ public:
 	Vector3 angularVelocity;
 	Matrix3x3 inverseInertiaTensor;
 
-	BoundingSphere* shape;
-
 	float restitution; // this will range between 0.0 to 1.0 inclusive
+
+	Matrix3x3 rotationMatrix;
+
+	CollisionShape* shape;
 
 private:
 	Vector3 accumulatedForces;
@@ -66,22 +68,27 @@ public:
 	}
 
 	// delta-time denotes change over the simulation step
+	// In RigidBody.h
+
 	void integrate(float dt) {
-		if (inverseMass <= 0.0) {
+		if (inverseMass > 0.0f) {
+			Vector3 angularAcceleration = inverseInertiaTensor.transform(accumulatedTorque);
+			angularVelocity += angularAcceleration * dt;
+
+			orientation.updateByAngularVelocity(angularVelocity, dt);
+		}
+
+		orientation.normalize();
+		this->rotationMatrix.setOrientation(this->orientation);
+
+		if (inverseMass <= 0.0f) {
+			clearAccumulators();
 			return;
 		}
 
-		// usual linear integration
 		acceleration = accumulatedForces * inverseMass;
 		velocity += acceleration * dt;
 		position += velocity * dt;
-
-		// new angular integration
-		Vector3 angularAcceleration = inverseInertiaTensor.transform(accumulatedTorque);
-		angularVelocity += angularAcceleration * dt;
-
-		orientation.updateByAngularVelocity(angularVelocity, dt);
-		orientation.normalize();
 
 		clearAccumulators();
 	}

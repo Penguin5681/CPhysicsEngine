@@ -1,76 +1,71 @@
-CLASS PhysicsWorld:
+CLASS Matrix3x3:
     // ... all existing code ...
 
-    // MODIFIED: detectCollisions() must now calculate the contact point
+    // --- NEW HELPER FUNCTION ---
+    // Transforms a vector as if by the transpose of this matrix.
+    [[nodiscard]] FUNCTION Vector3 transformTranspose(const Vector3& vector) const
+        // M^T * v
+        RETURN Vector3(
+            data[0] * vector.x + data[3] * vector.y + data[6] * vector.z, // row 0
+            data[1] * vector.x + data[4] * vector.y + data[7] * vector.z, // row 1
+            data[2] * vector.x + data[5] * vector.y + data[8] * vector.z  // row 2
+        );
+    END FUNCTION
+
+    // PhyWORLD
+
+
+
+    // This is inside the PhysicsWorld class
+
     PRIVATE:
-        FUNCTION void detectCollisions()
-            // ... in the N-squared loop ...
-            IF dist < totalRadius:
-                // ... normal and penetration ...
+      // We will also need a <cmath> include for std::min/max
+      // if it's not already there.
 
-                // NEW: Calculate contact point
-                // For two spheres, it's halfway between them along the collision normal
-                DEFINE Vector3 contact = body1->position + normal * (body1->shape->radius - penetration / 2.0f)
+      // --- NEW HELPER FUNCTION: Clamp ---
+      // A simple helper to clamp a value between a min and max
+      FUNCTION float clamp(float value, float minVal, float maxVal)
+          RETURN std::max(minVal, std::min(value, maxVal));
+      END FUNCTION
 
-                collisions.push_back(CollisionManifold(body1, body2, normal, penetration, contact))
-                // ... print statement ...
-            END IF
-        END FUNCTION
 
-    // HEAVILY MODIFIED: The full, correct impulse resolution
-    PRIVATE:
-        FUNCTION void resolveCollisions()
-            FOR EACH manifold IN collisions:
-                RigidBody* A = manifold.bodyA
-                RigidBody* B = manifold.bodyB
-                Vector3 normal = manifold.contactNormal
-                Vector3 contactPoint = manifold.contactPoint
+      // --- IMPLEMENTING THE STUB ---
+      FUNCTION void checkSphereBox(RigidBody* sphereBody, RigidBody* boxBody)
+          // 1. Get the shapes
+          BoundingSphere* sphere = (BoundingSphere*)sphereBody->shape;
+          BoundingBox* box = (BoundingBox*)boxBody->shape;
 
-                // --- (1) Calculate all the vectors from center of mass to contact point ---
-                DEFINE Vector3 rA = contactPoint - A->position
-                DEFINE Vector3 rB = contactPoint - B->position
+          // 2. Transform sphere center into box's local space
+          Vector3 sphereCenterWorld = sphereBody->position;
+          Vector3 sphereCenterLocal = boxBody->rotationMatrix.transformTranspose(
+              sphereCenterWorld - boxBody->position
+          );
 
-                // --- (2) Calculate relative velocity AT THE CONTACT POINT ---
-                // v = v_linear + v_angular
-                // v_angular = angularVelocity x r
-                DEFINE Vector3 velA = A->velocity + A->angularVelocity.cross(rA)
-                DEFINE Vector3 velB = B->velocity + B->angularVelocity.cross(rB)
-                DEFINE Vector3 relVel = velB - velA
+          // 3. Find the closest point on the AABB (in local space)
+          // by clamping the local sphere center to the box's half-extents.
+          Vector3 closestPointLocal;
+          closestPointLocal.x = clamp(sphereCenterLocal.x, -box->halfExtents.x, box->halfExtents.x);
+          closestPointLocal.y = clamp(sphereCenterLocal.y, -box->halfExtents.y, box->halfExtents.y);
+          closestPointLocal.z = clamp(sphereCenterLocal.z, -box->halfExtents.z, box->halfExtents.z);
 
-                // ... (as before) ...
-                DEFINE float velAlongNormal = relVel.dot(normal)
-                IF velAlongNormal > 0.0 THEN CONTINUE
-                DEFINE float e = min(A->restitution, B->restitution)
+          // 4. Transform the local closest point back into world space
+          Vector3 closestPointWorld = boxBody->rotationMatrix.transform(closestPointLocal) + boxBody->position;
 
-                // --- (3) The FULL impulse formula (with rotation) ---
-                // This is the hardest part of any physics engine.
+          // 5. Now we just do a simple sphere-vs-point check
+          Vector3 dir = sphereCenterWorld - closestPointWorld;
+          float distanceSquared = dir.magnitudeSquared();
+          float radiusSquared = sphere->radius * sphere->radius;
 
-                // a) Calculate the rotational "mass" part
-                DEFINE Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(normal))).cross(rA)
-                DEFINE Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(normal))).cross(rB)
+          IF distanceSquared < radiusSquared:
+              // We have a collision!
+              float distance = std::sqrt(distanceSquared);
+              Vector3 normal = (distance > 0.0f) ? dir / distance : Vector3(0, 1, 0);
+              float penetration = sphere->radius - distance;
+              Vector3 contactPoint = closestPointWorld; // The contact point *is* the closest point
 
-                // b) The full denominator
-                DEFINE float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(normal)
-
-                // c) Calculate the impulse scalar j
-                DEFINE float j = -(1.0f + e) * velAlongNormal
-                j /= denominator // <-- THIS IS THE FIX FOR THE "SUPER-BOUNCE"
-
-                // --- (4) Apply linear AND angular impulse ---
-                DEFINE Vector3 impulse = normal * j
-                A->velocity -= impulse * A->inverseMass
-                A->addTorque(-(rA.cross(impulse))) // Apply angular impulse
-
-                B->velocity += impulse * B->inverseMass
-                B->addTorque(rB.cross(impulse)) // Apply angular impulse
-
-                // --- (5) Positional Correction (The "Sinking" fix) ---
-                // We push the objects apart based on penetration depth
-                DEFINE float percent = 0.2f // Usually 20-80%
-                DEFINE float slop = 0.01f  // A small buffer
-                DEFINE Vector3 correction = normal * (max(penetration - slop, 0.0f) / (A->inverseMass + B->inverseMass)) * percent
-
-                A->position -= correction * A->inverseMass
-                B->position += correction * B->inverseMass
-            END FOR
-        END FUNCTION
+              // Add the manifold
+              // Note: The normal must point from A (sphere) to B (box)
+              // Our 'dir' is (sphere - box), so the normal is already correct.
+              collisions.push_back(CollisionManifold(sphereBody, boxBody, normal, penetration, contactPoint));
+          END IF
+      END FUNCTION

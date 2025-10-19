@@ -9,9 +9,14 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <utility>
+#include <cfloat>
+#include <cmath>
 
 #include "RigidBody.h"
 #include "../Collision/CollisionManifold.h"
+#include "../Collision/BoundingSphere.h"
+#include "../Collision/BoundingBox.h"
 
 class PhysicsWorld {
 	std::vector<RigidBody*> bodies;
@@ -42,30 +47,168 @@ public:
 	}
 
 private:
+	struct Projection {
+		float min;
+		float max;
+	};
+
 	void detectCollisions() {
 		for (size_t i = 0; i < bodies.size(); i++) {
 			for (size_t j = i + 1; j < bodies.size(); j++) {
-				RigidBody* body1 = bodies[i];
-				RigidBody* body2 = bodies[j];
+				RigidBody* bodyA = bodies[i];
+				RigidBody* bodyB = bodies[j];
 
-				if (body1->shape == nullptr || body2->shape == nullptr) {
+				if (bodyA->shape == nullptr || bodyB->shape == nullptr) {
 					continue;
 				}
 
-				const Vector3 dir = body2->position - body1->position;
-				float dist = dir.magnitude();
-				const float totalRadius = body1->shape->radius + body2->shape->radius;
+				findCollisionFeatures(bodyA, bodyB);
+			}
+		}
+	}
 
-				if (dist < totalRadius) {
-					const Vector3 normal = (dist > 0.0f) ? dir / dist : Vector3(0, 1, 0);
-					const float penetration = totalRadius - dist;
-					const Vector3 contact = body1->position + normal * (body1->shape->radius - penetration / 2.0f);
+	void findCollisionFeatures(RigidBody* bodyA, RigidBody* bodyB) {
+		ShapeType typeA = bodyA->shape->getType();
+		ShapeType typeB = bodyB->shape->getType();
 
-					collisions.push_back(CollisionManifold(body1, body2, normal, penetration, contact));
+		// this is our dispatch table
+		if (typeA == SPHERE and typeB == SPHERE) {
+			checkSphereSphere(bodyA, bodyB);
+		}
+		else if (typeA == BOX and typeB == BOX) {
+			checkSat(bodyA, bodyB);
+		}
+		else if (typeA == BOX and typeB == SPHERE) {
+			checkSphereBox(bodyB, bodyA);
+		}
+		else if (typeA == SPHERE and typeB == BOX) {
+			checkSphereBox(bodyA, bodyB);
+		}
+	}
 
-					std::cout << "COLLISION: Body " << i << " is overlapping Body " << j << std::endl;
+	void checkSphereSphere(RigidBody* sphereA, RigidBody* sphereB) {
+		BoundingSphere* shapeA = static_cast<BoundingSphere*>(sphereA->shape);
+		BoundingSphere* shapeB = static_cast<BoundingSphere*>(sphereB->shape);
+
+		const Vector3 dir = sphereB->position - sphereA->position;
+		float dist = dir.magnitude();
+		const float totalRadius = shapeA->radius + shapeB->radius;
+
+		if (dist < totalRadius) {
+			const Vector3 normal = (dist > 0.0f) ? dir / dist : Vector3(0, 1, 0);
+			const float penetration = totalRadius - dist;
+			const Vector3 contact = sphereA->position + normal * (shapeA->radius - penetration / 2.0f);
+
+			collisions.push_back(CollisionManifold(sphereA, sphereB, normal, penetration, contact));
+		}
+	}
+
+	void checkSat(RigidBody* boxA, RigidBody* boxB) {
+		Vector3 axesA[3];
+		axesA[0] = boxA->rotationMatrix.getColumn(0);
+		axesA[1] = boxA->rotationMatrix.getColumn(1);
+		axesA[2] = boxA->rotationMatrix.getColumn(2);
+
+		Vector3 axesB[3];
+		axesB[0] = boxB->rotationMatrix.getColumn(0);
+		axesB[1] = boxB->rotationMatrix.getColumn(1);
+		axesB[2] = boxB->rotationMatrix.getColumn(2);
+
+		Vector3 testAxes[15];
+		int axisCount = 0;
+
+		// adding 3 face axes from A
+		testAxes[axisCount++] = axesA[0];
+		testAxes[axisCount++] = axesA[1];
+		testAxes[axisCount++] = axesA[2];
+
+		// adding 3 face axes from A
+		testAxes[axisCount++] = axesB[0];
+		testAxes[axisCount++] = axesB[1];
+		testAxes[axisCount++] = axesB[2];
+
+		for (size_t i = 0; i < 3; i++) {
+			for (size_t j = 0; j < 3; j++) {
+				Vector3 cross = axesA[i].cross(axesB[j]);
+				if (cross.magnitudeSquared() > 0.001f) {
+					testAxes[axisCount++] = cross.normalized();
 				}
 			}
+		}
+
+		// main SAT loop
+		float minOverlap = FLT_MAX;
+		Vector3 collisionNormal = Vector3(0, 0, 0);
+
+		for (size_t i = 0; i < axisCount; i++) {
+			Vector3 axis = testAxes[i];
+
+			Projection pA = project(boxA, axis);
+			Projection pB = project(boxB, axis);
+
+			if (projectionOverlap(pA, pB) == false) {
+				// this means that there is a separating axis and there is no collision
+				return;
+			}
+
+			float overlap = getOverlap(pA, pB);
+			if (overlap < minOverlap) {
+				minOverlap = overlap;
+				collisionNormal = axis;
+			}
+		}
+
+		// we now have a collision since all the axes overlapped
+		Vector3 dir = boxB->position - boxA->position;
+		if (dir.dot(collisionNormal) < 0.0f) {
+			collisionNormal = collisionNormal * -1.0f;
+		}
+
+		// here I am going to find the contact point
+		// for now I'll just use the center of boxA
+		// TODO: The real contact point algorithm would be implemented later on
+		Vector3 contactPoint = boxA->position;
+
+		collisions.push_back(CollisionManifold(boxA, boxB, collisionNormal, minOverlap, contactPoint));
+	}
+
+	float clamp(float value, float minVal, float maxVal) {
+		return std::max(minVal, std::min(value, maxVal));
+	}
+
+	void checkSphereBox(RigidBody* sphereBody, RigidBody* boxBody) {
+		BoundingSphere* sphere = static_cast<BoundingSphere*>(sphereBody->shape);
+		BoundingBox* box = static_cast<BoundingBox*>(boxBody->shape);
+
+		Vector3 sphereCenterWorld = sphereBody->position;
+		Vector3 sphereCenterLocal = boxBody->rotationMatrix.transformTranspose(
+			sphereCenterWorld - boxBody->position
+		);
+
+		Vector3 closestPointLocal;
+		closestPointLocal.x = clamp(sphereCenterLocal.x, -box->halfExtents.x, box->halfExtents.x);
+		closestPointLocal.y = clamp(sphereCenterLocal.y, -box->halfExtents.y, box->halfExtents.y);
+		closestPointLocal.z = clamp(sphereCenterLocal.z, -box->halfExtents.z, box->halfExtents.z);
+
+		Vector3 closestPointWorld = boxBody->rotationMatrix.transform(closestPointLocal) + boxBody->position;
+
+		Vector3 dir = sphereCenterWorld - closestPointWorld;
+		float distanceSquared = dir.magnitudeSquared();
+		float radiusSquared = sphere->radius * sphere->radius;
+
+		if (distanceSquared < radiusSquared) {
+			// this means there is a collision
+			float distance = std::sqrt(distanceSquared);
+			Vector3 normal = (distance > 0.0f) ? dir / distance : Vector3(0, 1, 0);
+			Vector3 normal_B_to_A = (distance > 0.0f) ? dir / distance : Vector3(0, 1, 0);
+			float penetration = sphere->radius - distance;
+			Vector3 contactPoint = closestPointWorld;
+
+			Vector3 normal_A_to_B = normal_B_to_A * -1.0f;
+
+			std::cout << "COLLISION: Sphere(" << sphereBody << ") vs Box(" << boxBody << ")" << std::endl;
+
+			collisions.push_back(CollisionManifold(sphereBody, boxBody, normal_A_to_B, penetration, contactPoint));
 		}
 	}
 
@@ -129,6 +272,46 @@ private:
 			A->position -= correction * A->inverseMass;
 			B->position += correction * B->inverseMass;
 		}
+	}
+
+	Projection project(RigidBody* boxBody, Vector3 axis) {
+		auto* box = static_cast<BoundingBox*>(boxBody->shape);
+		Vector3 halfExtents = box->halfExtents;
+
+		Vector3 vertices[8];
+		vertices[0] = Vector3(halfExtents.x, halfExtents.y, halfExtents.z);
+		vertices[1] = Vector3(-halfExtents.x, halfExtents.y, halfExtents.z);
+		vertices[2] = Vector3(halfExtents.x, -halfExtents.y, halfExtents.z);
+		vertices[3] = Vector3(halfExtents.x, halfExtents.y, -halfExtents.z);
+		vertices[4] = Vector3(-halfExtents.x, -halfExtents.y, halfExtents.z);
+		vertices[5] = Vector3(-halfExtents.x, halfExtents.y, -halfExtents.z);
+		vertices[6] = Vector3(halfExtents.x, -halfExtents.y, -halfExtents.z);
+		vertices[7] = Vector3(-halfExtents.x, -halfExtents.y, -halfExtents.z);
+
+		Vector3 worldVertex = boxBody->rotationMatrix.transform(vertices[0]) + boxBody->position;
+		float min = axis.dot(worldVertex);
+		float max = min;
+
+		for (size_t i = 1; i < 8; i++) {
+			worldVertex = boxBody->rotationMatrix.transform(vertices[i]) + boxBody->position;
+			float p = axis.dot(worldVertex);
+
+			if (p < min) {
+				min = p;
+			}
+			if (p > max) {
+				max = p;
+			}
+		}
+		return {min, max};
+	}
+
+	static bool projectionOverlap(Projection pA, Projection pB) {
+		return (pA.max > pB.min and pA.min < pB.max);
+	}
+
+	static float getOverlap(Projection pA, Projection pB) {
+		return std::min(pA.max, pB.max) - std::max(pA.min, pB.min);
 	}
 };
 
