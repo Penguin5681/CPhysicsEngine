@@ -27,6 +27,29 @@ float toDegrees(const Matrix3x3& rotMatrix) {
 	return -radians * 180.0f / M_PI;
 }
 
+// this would convert screen pixel co-ord to physics world co-ord
+Vector3 toWorldPos(const sf::Vector2i& screenPos) {
+	return {
+		(screenPos.x - WINDOW_WIDTH / 2.0f) / PIXELS_PER_METER,
+		-(screenPos.y - WINDOW_HEIGHT / 2.0f) / PIXELS_PER_METER,
+		0.0f
+	};
+}
+
+// AABB check i.e, axis-aligned
+bool isPointInsideAABB(const Vector3& point, const RigidBody* body) {
+	if (body->shape == NULL or body->shape->getType() != BOX) {
+		return false;
+	}
+
+	BoundingBox* box = (BoundingBox*)body->shape;
+	Vector3 pos = body->position;
+	Vector3 halfExtents = box->halfExtents;
+
+	return (point.x >= pos.x - halfExtents.x and point.x <= pos.x + halfExtents.x and point.y >= pos.y - halfExtents.y and
+		point.y <= pos.y + halfExtents.y);
+}
+
 int main() {
 	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "CPhysicsEngine - Box Collision Test");
 	window.setFramerateLimit(60);
@@ -82,20 +105,58 @@ int main() {
 	box2Gfx.setFillColor(sf::Color::Green);
 	shapes.push_back(box2Gfx);
 
+	RigidBody* draggedBody = nullptr;
+	Vector3 dragOffset = Vector3(0, 0, 0);
+
+	// NOTE: The game loop
+
 	while (window.isOpen()) {
 		sf::Event event{};
 		while (window.pollEvent(event)) {
 			if (event.type == sf::Event::Closed) {
 				window.close();
 			}
+			else if (event.type == sf::Event::MouseButtonPressed) {
+				if (event.mouseButton.button == sf::Mouse::Left) {
+					Vector3 mouseWorldPos = toWorldPos(sf::Mouse::getPosition(window));
+
+					for (auto body : bodies) {
+						if (body->inverseMass > 0.0f and isPointInsideAABB(mouseWorldPos, body)) {
+							draggedBody = body;
+							dragOffset = mouseWorldPos - body->position;
+							break;
+						}
+					}
+				}
+			}
+			else if (event.type == sf::Event::MouseButtonReleased) {
+				if (event.mouseButton.button == sf::Mouse::Left) {
+					if (draggedBody != nullptr) {
+						draggedBody = nullptr;
+					}
+				}
+			}
+			else if (event.type == sf::Event::MouseMoved) {
+				if (draggedBody != nullptr) {
+					Vector3 mouseWorldPos = toWorldPos(sf::Mouse::getPosition(window));
+					draggedBody->position = mouseWorldPos - dragOffset;
+					draggedBody->velocity = Vector3(0, 0, 0);
+					draggedBody->angularVelocity = Vector3(0, 0, 0);
+				}
+			}
 		}
 
-		world.step(timeStep);
+		// NOTE: updating physics state
+		if (draggedBody == nullptr) {
+			world.step(timeStep);
+		}
 
+		// NOTE: drawing actual stuff;
 		for (size_t i = 0; i < bodies.size(); ++i) {
 			RigidBody* body = bodies[i];
 			sf::RectangleShape& shape = shapes[i];
 
+			// NOTE: updating graphics from physics
 			shape.setPosition(toScreenPos(body->position));
 			shape.setRotation(toDegrees(body->rotationMatrix));
 		}

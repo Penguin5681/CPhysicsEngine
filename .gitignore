@@ -14,7 +14,6 @@ CMakeUserPresets.json
 *.o
 *.obj
 *.txt
-src/Dynamics/pseudocode.txt
 **/CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
