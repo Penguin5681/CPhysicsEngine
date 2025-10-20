@@ -98,7 +98,9 @@ private:
 			const float penetration = totalRadius - dist;
 			const Vector3 contact = sphereA->position + normal * (shapeA->radius - penetration / 2.0f);
 
-			collisions.push_back(CollisionManifold(sphereA, sphereB, normal, penetration, contact));
+			CollisionManifold manifold(sphereA, sphereB, normal, penetration);
+			manifold.addContactPoint(contact);
+			collisions.push_back(manifold);
 		}
 	}
 
@@ -167,13 +169,59 @@ private:
 		Vector3 dir = boxB->position - boxA->position;
 		if (dir.dot(collisionNormal) < 0.0f) {
 			collisionNormal = collisionNormal * -1.0f;
-			std::cout << "SAT: Flipped collision normal: (" << collisionNormal.x << ", "
-				<< collisionNormal.y << ", " << collisionNormal.z << ")" << std::endl;
 		}
 
-		Vector3 contactPoint = (boxA->position + boxB->position) * 0.5f;
+		BoundingBox* boxShapeB = (BoundingBox*)boxB->shape;
+		const Matrix3x3& rotB = boxB->rotationMatrix;
+		const Vector3& centerB = boxB->position;
+		const Vector3& halfExtentsB = boxShapeB->halfExtents;
 
-		collisions.push_back(CollisionManifold(boxA, boxB, collisionNormal, minOverlap, contactPoint));
+		Vector3 verticesB_local[8];
+		verticesB_local[0].x = halfExtentsB.x;
+		verticesB_local[0].y = halfExtentsB.y;
+		verticesB_local[0].z = halfExtentsB.z;
+		verticesB_local[1].x = -halfExtentsB.x;
+		verticesB_local[1].y = halfExtentsB.y;
+		verticesB_local[1].z = halfExtentsB.z;
+		verticesB_local[2].x = halfExtentsB.x;
+		verticesB_local[2].y = -halfExtentsB.y;
+		verticesB_local[2].z = halfExtentsB.z;
+		verticesB_local[3].x = halfExtentsB.x;
+		verticesB_local[3].y = halfExtentsB.y;
+		verticesB_local[3].z = -halfExtentsB.z;
+		verticesB_local[4].x = -halfExtentsB.x;
+		verticesB_local[4].y = -halfExtentsB.y;
+		verticesB_local[4].z = halfExtentsB.z;
+		verticesB_local[5].x = -halfExtentsB.x;
+		verticesB_local[5].y = halfExtentsB.y;
+		verticesB_local[5].z = -halfExtentsB.z;
+		verticesB_local[6].x = halfExtentsB.x;
+		verticesB_local[6].y = -halfExtentsB.y;
+		verticesB_local[6].z = -halfExtentsB.z;
+		verticesB_local[7].x = -halfExtentsB.x;
+		verticesB_local[7].y = -halfExtentsB.y;
+		verticesB_local[7].z = -halfExtentsB.z;
+
+		float maxPenetration = -FLT_MAX;
+		Vector3 contactPoint = centerB;
+
+		for (size_t i = 0; i < 8; i++) {
+			Vector3 vertexB_world = rotB.transform(verticesB_local[i]) + centerB;
+			float vertexPenetration = (boxA->position - vertexB_world).dot(collisionNormal);
+
+			if (vertexPenetration > maxPenetration) {
+				maxPenetration = vertexPenetration;
+				contactPoint = vertexB_world;
+			}
+		}
+
+		CollisionManifold manifold(boxA, boxB, collisionNormal, minOverlap);
+		manifold.addContactPoint(contactPoint);
+		collisions.push_back(manifold);
+
+		// Vector3 contactPoint = (boxA->position + boxB->position) * 0.5f;
+		//
+		// collisions.push_back(CollisionManifold(boxA, boxB, collisionNormal, minOverlap, contactPoint));
 	}
 
 	float clamp(float value, float minVal, float maxVal) {
@@ -210,68 +258,73 @@ private:
 
 			Vector3 normal_A_to_B = normal_B_to_A * -1.0f;
 
-			std::cout << "COLLISION: Sphere(" << sphereBody << ") vs Box(" << boxBody << ")" << std::endl;
-
-			collisions.push_back(CollisionManifold(sphereBody, boxBody, normal_A_to_B, penetration, contactPoint));
+			CollisionManifold manifold(sphereBody, boxBody, normal_A_to_B, penetration);
+			manifold.addContactPoint(contactPoint);
+			collisions.push_back(manifold);
 		}
 	}
 
 	void resolveCollisions() {
 		for (auto manifold : collisions) {
-			RigidBody* A = manifold.bodyA;
-			RigidBody* B = manifold.bodyB;
+			if (manifold.numContactPoints == 0) {
+				continue;
+			}
+
+			auto* A = manifold.bodyA;
+			auto* B = manifold.bodyB;
 			Vector3 normal = manifold.contactNormal;
-			Vector3 contactPoint = manifold.contactPoint;
-
-			Vector3 rA = contactPoint - A->position;
-			Vector3 rB = contactPoint - B->position;
-
-			Vector3 velA = A->velocity + A->angularVelocity.cross(rA);
-			Vector3 velB = B->velocity + B->angularVelocity.cross(rB);
-			Vector3 relVel = velB - velA;
-
-			float velAlongNormal = relVel.dot(normal);
 			float penetration = manifold.penetrationDepth;
-			if (velAlongNormal > 0.0f) {
-				continue;
+
+			for (size_t i = 0; i < manifold.numContactPoints; i++) {
+				Vector3 contactPoint = manifold.contactPoints[i];
+
+				Vector3 rA = contactPoint - A->position;
+				Vector3 rB = contactPoint - B->position;
+
+				Vector3 velA = A->velocity + A->angularVelocity.cross(rA);
+				Vector3 velB = B->velocity + B->angularVelocity.cross(rB);
+				Vector3 relVel = velB - velA;
+
+				float velAlongNormal = relVel.dot(normal);
+				float penetration = manifold.penetrationDepth;
+
+				if (velAlongNormal > 0.0f) {
+					continue;
+				}
+
+				float e = std::min(A->restitution, B->restitution);
+
+				Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(normal))).cross(rA);
+				Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(normal))).cross(rB);
+
+				float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(normal);
+
+				if (denominator <= 0.0f) {
+					continue;
+				}
+
+				float j = -(1.0f + e) * velAlongNormal;
+				j /= denominator;
+
+				Vector3 impulse = normal * j;
+				A->velocity -= impulse * A->inverseMass;
+				B->velocity += impulse * B->inverseMass;
+
+				Vector3 torqueImpulseA = rA.cross(impulse) * -1.0f;
+				Vector3 torqueImpulseB = rB.cross(impulse);
+
+				A->angularVelocity += A->inverseInertiaTensor.transform(torqueImpulseA);
+				B->angularVelocity += B->inverseInertiaTensor.transform(torqueImpulseB);
 			}
-
-			float e = std::min(A->restitution, B->restitution);
-
-			// computation of the rotational mass
-			Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(normal))).cross(rA);
-			Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(normal))).cross(rB);
-
-			float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(normal);
-
-			if (denominator <= 0.0f) {
-				continue;
-			}
-
-			float j = -(1.0f + e) * velAlongNormal;
-			j /= denominator;
 
 			const float totalInverseMass = A->inverseMass + B->inverseMass;
-
-			Vector3 impulse = normal * j;
-
-			A->velocity -= impulse * A->inverseMass;
-			B->velocity += impulse * B->inverseMass;
-
-			Vector3 torqueImpulseA = rA.cross(impulse) * -1.0f;
-			Vector3 torqueImpulseB = rB.cross(impulse);
-
-			A->angularVelocity += A->inverseInertiaTensor.transform(torqueImpulseA);
-			B->angularVelocity += B->inverseInertiaTensor.transform(torqueImpulseB);
-
-			float percent = 0.2f;
-			float slop = 0.01f;
-
 			if (totalInverseMass <= 0.0f) {
 				continue;
 			}
 
-			Vector3 correction = normal * (std::max(penetration - slop, 0.0f) / (A->inverseMass + B->inverseMass)) * percent;
+			const float percent = 0.2f;
+			const float slop = 0.01f;
+			Vector3 correction = normal * (std::max(penetration - slop, 0.0f) / totalInverseMass) * percent;
 
 			A->position -= correction * A->inverseMass;
 			B->position += correction * B->inverseMass;
