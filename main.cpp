@@ -1,89 +1,116 @@
 #include "./src/Core/Vector3.h"
-#include "./src/Core/Quaternion.h" // <-- Need this for rotation
+#include "./src/Core/Quaternion.h"
 #include "./src/Dynamics/PhysicsWorld.h"
 #include "./src/Dynamics/RigidBody.h"
-#include "./src/Collision/BoundingSphere.h" // <-- Need Sphere
-#include "./src/Collision/BoundingBox.h"    // <-- Need Box
-#include <iostream>
-#include <iomanip>
-#include <cmath> // For M_PI
+#include "./src/Collision/BoundingBox.h"
+#include <cmath>
+#include <vector>
+#include <SFML/Graphics.hpp>
 
-// Define PI if not available (Windows)
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
+constexpr float PIXELS_PER_METER = 30.0f;
+constexpr int WINDOW_WIDTH = 1200;
+constexpr int WINDOW_HEIGHT = 800;
+
+sf::Vector2f toScreenPos(const Vector3& worldPos) {
+	return {
+		worldPos.x * PIXELS_PER_METER + WINDOW_WIDTH / 2.0f,
+		-worldPos.y * PIXELS_PER_METER + WINDOW_HEIGHT / 2.0f
+	};
+}
+
+float toDegrees(const Matrix3x3& rotMatrix) {
+	const float radians = atan2f(rotMatrix.data[3], rotMatrix.data[0]);
+	return -radians * 180.0f / M_PI;
+}
+
 int main() {
-    // 1. Setup Simulation with gravity
-    Vector3 gravity = Vector3(0.0f, -9.81f, 0.0f);
-    PhysicsWorld world(gravity);
+	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "CPhysicsEngine - Box Collision Test");
+	window.setFramerateLimit(60);
 
-    constexpr float timeStep = 1.0f / 60.0f;
-    constexpr float simulationDuration = 6.0f;
+	Vector3 gravity = Vector3(0.0f, -5.0f, 0.0f);
+	PhysicsWorld world(gravity);
+	float timeStep = 1.0f / 60.0f;
 
-    // 2. Create the "Ramp" (a rotated box)
-    auto* rampBody = new RigidBody();
-    rampBody->position = Vector3(0.0f, -5.0f, 0.0f);
-    rampBody->inverseMass = 0.0f; // Immovable
-    rampBody->restitution = 0.5f;
+	std::vector<RigidBody*> bodies;
 
-    // Create a long, flat box shape
-    auto* rampShape = new BoundingBox(Vector3(20.0f, 1.0f, 20.0f));
-    rampBody->shape = rampShape;
-    rampBody->inverseInertiaTensor.setInverseInertiaTensorCuboid(1.0f, Vector3(40.0f, 2.0f, 40.0f));
+	auto* box1 = new RigidBody();
+	box1->position = Vector3(-10.0f, 0.0f, 0.0f);
+	box1->velocity = Vector3(5.0f, 2.0f, 0.0f);
+	box1->inverseMass = 1.0f / 5.0f;
+	box1->restitution = 0.6f;
+	auto shape1Data = new BoundingBox(Vector3(1.5f, 1.0f, 1.0f));
+	box1->shape = shape1Data;
+	box1->inverseInertiaTensor.setInverseInertiaTensorCuboid(5.0f, Vector3(3.0f, 2.0f, 2.0f));
+	box1->orientation = Quaternion(cosf(0.1f), 0, 0, sinf(0.1f));
+	box1->orientation.normalize();
 
-    // --- Give the ramp its rotation ---
-    // Rotate it 20 degrees "up" around the Z-axis
-    float angle = 20.0f * (float)M_PI / 180.0f;
-    Vector3 axis(0.0f, 0.0f, 1.0f);
-    rampBody->orientation = Quaternion(cosf(angle / 2.0f),
-                                       axis.x * sinf(angle / 2.0f),
-                                       axis.y * sinf(angle / 2.0f),
-                                       axis.z * sinf(angle / 2.0f));
+	auto* box2 = new RigidBody();
+	box2->position = Vector3(10.0f, 2.0f, 0.0f);
+	box2->velocity = Vector3(-5.0f, 0.0f, 0.0f);
+	box2->inverseMass = 1.0f / 8.0f;
+	box2->restitution = 0.6f;
+	auto* shape2Data = new BoundingBox(Vector3(1.0f, 1.5f, 1.0f));
+	box2->shape = shape2Data;
+	box2->inverseInertiaTensor.setInverseInertiaTensorCuboid(8.0f, Vector3(2.0f, 3.0f, 2.0f));
+	box2->orientation = Quaternion(cosf(-0.3f), 0, 0, sinf(-0.3f));
+	box2->orientation.normalize();
 
-    // 3. Create the "Ball"
-    auto* ballBody = new RigidBody();
-    ballBody->position = Vector3(-10.0f, 10.0f, 0.0f); // Start high and to the left
-    ballBody->inverseMass = 1.0f; // 1kg mass
-    ballBody->restitution = 0.5f;
+	world.addBody(box1);
+	world.addBody(box2);
+	bodies.push_back(box1);
+	bodies.push_back(box2);
 
-    auto* ballShape = new BoundingSphere(1.0f); // 1m radius
-    ballBody->shape = ballShape;
-    // (Inertia tensor for a sphere is different, but our cuboid one is a fine approximation for now)
-    ballBody->inverseInertiaTensor.setInverseInertiaTensorCuboid(1.0f, Vector3(2.0f, 2.0f, 2.0f));
+	std::vector<sf::RectangleShape> shapes;
 
+	sf::RectangleShape box1Gfx;
+	box1Gfx.setSize(sf::Vector2f(shape1Data->halfExtents.x * 2.0f * PIXELS_PER_METER,
+	                             shape1Data->halfExtents.y * 2.0f * PIXELS_PER_METER));
+	box1Gfx.setOrigin(shape1Data->halfExtents.x * PIXELS_PER_METER,
+	                  shape1Data->halfExtents.y * PIXELS_PER_METER);
+	box1Gfx.setFillColor(sf::Color::Blue);
+	shapes.push_back(box1Gfx);
 
-    // 4. Add bodies to the world
-    world.addBody(rampBody);
-    world.addBody(ballBody);
+	sf::RectangleShape box2Gfx;
+	box2Gfx.setSize(sf::Vector2f(shape2Data->halfExtents.x * 2.0f * PIXELS_PER_METER,
+	                             shape2Data->halfExtents.y * 2.0f * PIXELS_PER_METER));
+	box2Gfx.setOrigin(shape2Data->halfExtents.x * PIXELS_PER_METER,
+	                  shape2Data->halfExtents.y * PIXELS_PER_METER);
+	box2Gfx.setFillColor(sf::Color::Green);
+	shapes.push_back(box2Gfx);
 
-    // 5. Run the Simulation Loop
-    float totalTime = 0.0;
+	while (window.isOpen()) {
+		sf::Event event{};
+		while (window.pollEvent(event)) {
+			if (event.type == sf::Event::Closed) {
+				window.close();
+			}
+		}
 
-    std::cout << std::fixed << std::setprecision(4);
-    std::cout << "--- Sphere-on-Box (Ramp) Test ---" << std::endl;
-    std::cout << "---------------------------------" << std::endl;
+		world.step(timeStep);
 
-    while (totalTime < simulationDuration) {
-        // Print the state of the falling ball
-        std::cout << "Time: " << std::setw(6) << totalTime << "s, "
-                  << "Ball Position: ("
-                  << std::setw(8) << ballBody->position.x << ", "
-                  << std::setw(8) << ballBody->position.y << ", "
-                  << std::setw(8) << ballBody->position.z << ")" << std::endl;
+		for (size_t i = 0; i < bodies.size(); ++i) {
+			RigidBody* body = bodies[i];
+			sf::RectangleShape& shape = shapes[i];
 
-        world.step(timeStep);
+			shape.setPosition(toScreenPos(body->position));
+			shape.setRotation(toDegrees(body->rotationMatrix));
+		}
 
-        totalTime += timeStep;
-    }
+		window.clear(sf::Color::Black);
+		for (const auto& shape : shapes) {
+			window.draw(shape);
+		}
+		window.display();
+	}
 
-    std::cout << "--- Test Complete ---" << std::endl;
+	delete shape1Data;
+	delete shape2Data;
+	delete box1;
+	delete box2;
 
-    // 6. Cleanup
-    delete rampShape;
-    delete ballShape;
-    delete rampBody;
-    delete ballBody;
-
-    return 0;
+	return 0;
 }

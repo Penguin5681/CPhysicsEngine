@@ -34,7 +34,7 @@ private:
 	Vector3 accumulatedTorque;
 
 public:
-	RigidBody() : orientation(1, 0, 0,0), shape(nullptr), restitution(0.7f) {}
+	RigidBody() : orientation(1, 0, 0,0), restitution(0.7f), shape(nullptr) {}
 
 	void addForce(const Vector3 force) {
 		accumulatedForces += force;
@@ -79,6 +79,7 @@ public:
 		}
 
 		orientation.normalize();
+
 		this->rotationMatrix.setOrientation(this->orientation);
 
 		if (inverseMass <= 0.0f) {

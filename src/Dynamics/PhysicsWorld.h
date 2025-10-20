@@ -9,7 +9,6 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
-#include <utility>
 #include <cfloat>
 #include <cmath>
 
@@ -117,12 +116,10 @@ private:
 		Vector3 testAxes[15];
 		int axisCount = 0;
 
-		// adding 3 face axes from A
 		testAxes[axisCount++] = axesA[0];
 		testAxes[axisCount++] = axesA[1];
 		testAxes[axisCount++] = axesA[2];
 
-		// adding 3 face axes from A
 		testAxes[axisCount++] = axesB[0];
 		testAxes[axisCount++] = axesB[1];
 		testAxes[axisCount++] = axesB[2];
@@ -130,44 +127,51 @@ private:
 		for (size_t i = 0; i < 3; i++) {
 			for (size_t j = 0; j < 3; j++) {
 				Vector3 cross = axesA[i].cross(axesB[j]);
-				if (cross.magnitudeSquared() > 0.001f) {
-					testAxes[axisCount++] = cross.normalized();
+				float magSq = cross.magnitudeSquared();
+				if (magSq > 0.001f) {
+					testAxes[axisCount++] = cross * (1.0f / std::sqrt(magSq));
 				}
 			}
 		}
 
-		// main SAT loop
+
 		float minOverlap = FLT_MAX;
 		Vector3 collisionNormal = Vector3(0, 0, 0);
 
 		for (size_t i = 0; i < axisCount; i++) {
 			Vector3 axis = testAxes[i];
 
+
 			Projection pA = project(boxA, axis);
 			Projection pB = project(boxB, axis);
 
+
 			if (projectionOverlap(pA, pB) == false) {
-				// this means that there is a separating axis and there is no collision
+				std::cout << "SAT: Separating axis found, no collision" << std::endl;
 				return;
 			}
 
 			float overlap = getOverlap(pA, pB);
+			std::cout << "SAT:   Overlap amount: " << overlap << std::endl;
+
 			if (overlap < minOverlap) {
 				minOverlap = overlap;
 				collisionNormal = axis;
 			}
 		}
 
-		// we now have a collision since all the axes overlapped
+		std::cout << "SAT: Final minimum overlap: " << minOverlap << std::endl;
+		std::cout << "SAT: Collision normal: (" << collisionNormal.x << ", "
+			<< collisionNormal.y << ", " << collisionNormal.z << ")" << std::endl;
+
 		Vector3 dir = boxB->position - boxA->position;
 		if (dir.dot(collisionNormal) < 0.0f) {
 			collisionNormal = collisionNormal * -1.0f;
+			std::cout << "SAT: Flipped collision normal: (" << collisionNormal.x << ", "
+				<< collisionNormal.y << ", " << collisionNormal.z << ")" << std::endl;
 		}
 
-		// here I am going to find the contact point
-		// for now I'll just use the center of boxA
-		// TODO: The real contact point algorithm would be implemented later on
-		Vector3 contactPoint = boxA->position;
+		Vector3 contactPoint = (boxA->position + boxB->position) * 0.5f;
 
 		collisions.push_back(CollisionManifold(boxA, boxB, collisionNormal, minOverlap, contactPoint));
 	}
@@ -274,36 +278,59 @@ private:
 		}
 	}
 
-	Projection project(RigidBody* boxBody, Vector3 axis) {
-		auto* box = static_cast<BoundingBox*>(boxBody->shape);
-		Vector3 halfExtents = box->halfExtents;
+	// Projection project(RigidBody* boxBody, const Vector3& axis) {
+	// 	Vector3 normAxis = axis.normalized();
+	//
+	// 	BoundingBox* box = static_cast<BoundingBox*>(boxBody->shape);
+	// 	const Matrix3x3& rot = boxBody->rotationMatrix;
+	// 	const Vector3& center = boxBody->position;
+	// 	const Vector3& halfExtents = box->halfExtents;
+	//
+	// 	float centerProj = normAxis.dot(center);
+	//
+	// 	float radiusProj = halfExtents.x * std::abs(normAxis.dot(rot.getColumn(0))) +
+	// 										 halfExtents.y * std::abs(normAxis.dot(rot.getColumn(1))) +
+	// 										 halfExtents.z * std::abs(normAxis.dot(rot.getColumn(2)));
+	//
+	// 	float minP = centerProj - radiusProj;
+	// 	float maxP = centerProj + radiusProj;
+	//
+	// 	return {minP, maxP};
+	// }
 
-		Vector3 vertices[8];
-		vertices[0] = Vector3(halfExtents.x, halfExtents.y, halfExtents.z);
-		vertices[1] = Vector3(-halfExtents.x, halfExtents.y, halfExtents.z);
-		vertices[2] = Vector3(halfExtents.x, -halfExtents.y, halfExtents.z);
-		vertices[3] = Vector3(halfExtents.x, halfExtents.y, -halfExtents.z);
-		vertices[4] = Vector3(-halfExtents.x, -halfExtents.y, halfExtents.z);
-		vertices[5] = Vector3(-halfExtents.x, halfExtents.y, -halfExtents.z);
-		vertices[6] = Vector3(halfExtents.x, -halfExtents.y, -halfExtents.z);
-		vertices[7] = Vector3(-halfExtents.x, -halfExtents.y, -halfExtents.z);
+	Projection project(RigidBody* boxBody, const Vector3& axis) {
+		BoundingBox* box = dynamic_cast<BoundingBox*>(boxBody->shape);
+		const Vector3& halfExtents = box->halfExtents;
+		const Matrix3x3& rot = boxBody->rotationMatrix;
+		const Vector3& center = boxBody->position;
 
-		Vector3 worldVertex = boxBody->rotationMatrix.transform(vertices[0]) + boxBody->position;
-		float min = axis.dot(worldVertex);
-		float max = min;
+		Vector3 vertices[8] = {
+			Vector3(halfExtents.x, halfExtents.y, halfExtents.z),
+			Vector3(-halfExtents.x, halfExtents.y, halfExtents.z),
+			Vector3(halfExtents.x, -halfExtents.y, halfExtents.z),
+			Vector3(halfExtents.x, halfExtents.y, -halfExtents.z),
+			Vector3(-halfExtents.x, -halfExtents.y, halfExtents.z),
+			Vector3(-halfExtents.x, halfExtents.y, -halfExtents.z),
+			Vector3(halfExtents.x, -halfExtents.y, -halfExtents.z),
+			Vector3(-halfExtents.x, -halfExtents.y, -halfExtents.z)
+		};
 
-		for (size_t i = 1; i < 8; i++) {
-			worldVertex = boxBody->rotationMatrix.transform(vertices[i]) + boxBody->position;
+		Vector3 worldVertex = rot.transform(vertices[0]) + center;
+		float minP = axis.dot(worldVertex);
+		float maxP = minP;
+
+		for (size_t i = 1; i < 8; ++i) {
+			worldVertex = rot.transform(vertices[i]) + center;
 			float p = axis.dot(worldVertex);
-
-			if (p < min) {
-				min = p;
+			if (p < minP) {
+				minP = p;
 			}
-			if (p > max) {
-				max = p;
+			if (p > maxP) {
+				maxP = p;
 			}
 		}
-		return {min, max};
+
+		return {minP, maxP};
 	}
 
 	static bool projectionOverlap(Projection pA, Projection pB) {

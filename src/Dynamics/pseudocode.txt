@@ -1,71 +1,141 @@
-CLASS Matrix3x3:
-    // ... all existing code ...
+// --- Includes ---
+#include <SFML/Graphics.hpp>
+#include "./src/Core/Vector3.h"         // <-- Physics includes are back
+#include "./src/Core/Quaternion.h"
+#include "./src/Dynamics/PhysicsWorld.h"
+#include "./src/Dynamics/RigidBody.h"
+#include "./src/Collision/BoundingBox.h"
+#include <iostream>
+#include <iomanip>
+#include <vector> // To store shapes
 
-    // --- NEW HELPER FUNCTION ---
-    // Transforms a vector as if by the transpose of this matrix.
-    [[nodiscard]] FUNCTION Vector3 transformTranspose(const Vector3& vector) const
-        // M^T * v
-        RETURN Vector3(
-            data[0] * vector.x + data[3] * vector.y + data[6] * vector.z, // row 0
-            data[1] * vector.x + data[4] * vector.y + data[7] * vector.z, // row 1
-            data[2] * vector.x + data[5] * vector.y + data[8] * vector.z  // row 2
-        );
-    END FUNCTION
+// --- Constants ---
+const float PIXELS_PER_METER = 20.0f; // Scale factor
+const int WINDOW_WIDTH = 1200;
+const int WINDOW_HEIGHT = 800;
 
-    // PhyWORLD
+// --- Helper Function: Convert physics coords to SFML coords ---
+sf::Vector2f toScreenPos(const Vector3& worldPos) {
+    return sf::Vector2f(
+        worldPos.x * PIXELS_PER_METER + WINDOW_WIDTH / 2.0f,  // Add offset to center (0,0)
+        -worldPos.y * PIXELS_PER_METER + WINDOW_HEIGHT / 2.0f // Invert Y and add offset
+    );
+}
 
-
-
-    // This is inside the PhysicsWorld class
-
-    PRIVATE:
-      // We will also need a <cmath> include for std::min/max
-      // if it's not already there.
-
-      // --- NEW HELPER FUNCTION: Clamp ---
-      // A simple helper to clamp a value between a min and max
-      FUNCTION float clamp(float value, float minVal, float maxVal)
-          RETURN std::max(minVal, std::min(value, maxVal));
-      END FUNCTION
+// --- Helper Function: Convert physics angle (from matrix) to SFML degrees ---
+float toDegrees(const Matrix3x3& rotMatrix) {
+    // For 2D (assuming rotation around Z), atan2 gives the angle
+    // rotMatrix.data[0] is cos(theta), data[3] is sin(theta) for 2D Z-rotation
+    float radians = atan2f(rotMatrix.data[3], rotMatrix.data[0]);
+    return -radians * 180.0f / M_PI; // Convert to degrees and invert for SFML
+}
 
 
-      // --- IMPLEMENTING THE STUB ---
-      FUNCTION void checkSphereBox(RigidBody* sphereBody, RigidBody* boxBody)
-          // 1. Get the shapes
-          BoundingSphere* sphere = (BoundingSphere*)sphereBody->shape;
-          BoundingBox* box = (BoundingBox*)boxBody->shape;
+FUNCTION main():
+    // 1. Create the window
+    sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "C++ Physics Engine");
+    window.setFramerateLimit(60);
 
-          // 2. Transform sphere center into box's local space
-          Vector3 sphereCenterWorld = sphereBody->position;
-          Vector3 sphereCenterLocal = boxBody->rotationMatrix.transformTranspose(
-              sphereCenterWorld - boxBody->position
-          );
+    // 2. Setup Physics World
+    Vector3 gravity = Vector3(0.0f, -9.81f, 0.0f);
+    PhysicsWorld world(gravity);
+    float timeStep = 1.0f / 60.0f;
 
-          // 3. Find the closest point on the AABB (in local space)
-          // by clamping the local sphere center to the box's half-extents.
-          Vector3 closestPointLocal;
-          closestPointLocal.x = clamp(sphereCenterLocal.x, -box->halfExtents.x, box->halfExtents.x);
-          closestPointLocal.y = clamp(sphereCenterLocal.y, -box->halfExtents.y, box->halfExtents.y);
-          closestPointLocal.z = clamp(sphereCenterLocal.z, -box->halfExtents.z, box->halfExtents.z);
+    // --- Create Physics Bodies ---
+    std::vector<RigidBody*> bodies; // Store body pointers
 
-          // 4. Transform the local closest point back into world space
-          Vector3 closestPointWorld = boxBody->rotationMatrix.transform(closestPointLocal) + boxBody->position;
+    // Floor Body
+    RigidBody* floorBody = new RigidBody();
+    floorBody->position = Vector3(0.0f, -15.0f, 0.0f); // Lower the floor a bit
+    floorBody->inverseMass = 0.0f;
+    floorBody->restitution = 0.5f;
+    BoundingBox* floorShapeData = new BoundingBox(Vector3(30.0f, 1.0f, 1.0f)); // Make floor visible width-wise
+    floorBody->shape = floorShapeData;
+    floorBody->inverseInertiaTensor.setInverseInertiaTensorCuboid(1.0f, Vector3(60.0f, 2.0f, 2.0f));
+    bodies.push_back(floorBody);
 
-          // 5. Now we just do a simple sphere-vs-point check
-          Vector3 dir = sphereCenterWorld - closestPointWorld;
-          float distanceSquared = dir.magnitudeSquared();
-          float radiusSquared = sphere->radius * sphere->radius;
+    // Falling Box Body
+    RigidBody* fallingBox = new RigidBody();
+    fallingBox->position = Vector3(-5.0f, 10.0f, 0.0f); // Start higher up
+    fallingBox->inverseMass = 1.0f / 10.0f;
+    fallingBox->restitution = 0.5f;
+    BoundingBox* boxShapeData = new BoundingBox(Vector3(1.0f, 1.0f, 1.0f)); // 2x2 box
+    fallingBox->shape = boxShapeData;
+    fallingBox->inverseInertiaTensor.setInverseInertiaTensorCuboid(10.0f, Vector3(2.0f, 2.0f, 2.0f));
+    // Give it a slight initial rotation
+    fallingBox->orientation = Quaternion(cosf(0.2f), 0, 0, sinf(0.2f));
+    bodies.push_back(fallingBox);
 
-          IF distanceSquared < radiusSquared:
-              // We have a collision!
-              float distance = std::sqrt(distanceSquared);
-              Vector3 normal = (distance > 0.0f) ? dir / distance : Vector3(0, 1, 0);
-              float penetration = sphere->radius - distance;
-              Vector3 contactPoint = closestPointWorld; // The contact point *is* the closest point
+    // --- Create SFML Shapes ---
+    std::vector<sf::RectangleShape> shapes;
 
-              // Add the manifold
-              // Note: The normal must point from A (sphere) to B (box)
-              // Our 'dir' is (sphere - box), so the normal is already correct.
-              collisions.push_back(CollisionManifold(sphereBody, boxBody, normal, penetration, contactPoint));
-          END IF
-      END FUNCTION
+    // Floor Shape (matches floorBody)
+    sf::RectangleShape floorGfx;
+    floorGfx.setSize(sf::Vector2f(floorShapeData->halfExtents.x * 2.0f * PIXELS_PER_METER,
+                                  floorShapeData->halfExtents.y * 2.0f * PIXELS_PER_METER));
+    floorGfx.setOrigin(floorShapeData->halfExtents.x * PIXELS_PER_METER,
+                       floorShapeData->halfExtents.y * PIXELS_PER_METER); // Center the origin!
+    floorGfx.setFillColor(sf::Color::White);
+    shapes.push_back(floorGfx);
+
+    // Box Shape (matches fallingBox)
+    sf::RectangleShape boxGfx;
+    boxGfx.setSize(sf::Vector2f(boxShapeData->halfExtents.x * 2.0f * PIXELS_PER_METER,
+                                boxShapeData->halfExtents.y * 2.0f * PIXELS_PER_METER));
+    boxGfx.setOrigin(boxShapeData->halfExtents.x * PIXELS_PER_METER,
+                     boxShapeData->halfExtents.y * PIXELS_PER_METER); // Center the origin!
+    boxGfx.setFillColor(sf::Color::Red);
+    shapes.push_back(boxGfx);
+
+
+    // 3. The Game Loop
+    WHILE window.isOpen():
+        // --- a) Handle Events ---
+        sf::Event event;
+        WHILE window.pollEvent(event):
+            IF event.type == sf::Event::Closed THEN
+                window.close();
+            END IF
+        END WHILE
+
+        // --- b) Update State (Physics) ---
+        world.step(timeStep);
+
+        // --- c) Update Graphics from Physics ---
+        // Loop through physics bodies and update corresponding gfx shapes
+        // (Assuming bodies[0] <-> shapes[0], bodies[1] <-> shapes[1], etc.)
+        FOR i FROM 0 TO bodies.size() - 1:
+            RigidBody* body = bodies[i];
+            sf::RectangleShape& shape = shapes[i]; // Use a reference!
+
+            // Update position
+            shape.setPosition(toScreenPos(body->position));
+
+            // Update rotation (only makes sense for dynamic objects)
+            // if (body->inverseMass > 0.0f) { // Optional: only rotate dynamic objects
+                shape.setRotation(toDegrees(body->rotationMatrix));
+            // }
+
+        END FOR
+
+
+        // --- d) Draw ---
+        window.clear(sf::Color::Black);
+
+        // Draw all shapes
+        FOR EACH shape IN shapes:
+            window.draw(shape);
+        END FOR
+
+        window.display();
+
+    END WHILE // End of game loop
+
+    // 4. Cleanup (shapes are automatic, need to delete physics data)
+    delete floorShapeData;
+    delete boxShapeData;
+    delete floorBody;
+    delete fallingBox;
+
+    RETURN 0
+END FUNCTION
