@@ -7,6 +7,7 @@
 
 #pragma once
 
+// TODO: Add more shapes later on
 enum ShapeType {
 	SPHERE,
 	BOX
@@ -14,8 +15,8 @@ enum ShapeType {
 
 class CollisionShape {
 public:
-	virtual ~CollisionShape() {}
-	virtual ShapeType getType() const = 0;
+	virtual ~CollisionShape() = default;
+	[[nodiscard]] virtual ShapeType getType() const = 0;
 };
 
 #endif //CPHYSICSENGINE_COLLISIONSHAPE_H

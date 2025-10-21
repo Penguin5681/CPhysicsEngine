@@ -3,6 +3,8 @@
 #include "./src/Dynamics/PhysicsWorld.h"
 #include "./src/Dynamics/RigidBody.h"
 #include "./src/Collision/BoundingBox.h"
+#include <iostream>
+#include <iomanip>
 #include <cmath>
 #include <vector>
 #include <SFML/Graphics.hpp>
@@ -11,7 +13,7 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-constexpr float PIXELS_PER_METER = 30.0f;
+constexpr float PIXELS_PER_METER = 20.0f;
 constexpr int WINDOW_WIDTH = 1200;
 constexpr int WINDOW_HEIGHT = 800;
 
@@ -23,155 +25,108 @@ sf::Vector2f toScreenPos(const Vector3& worldPos) {
 }
 
 float toDegrees(const Matrix3x3& rotMatrix) {
-	const float radians = atan2f(rotMatrix.data[3], rotMatrix.data[0]);
-	return -radians * 180.0f / M_PI;
+	float rad = atan2f(rotMatrix.data[3], rotMatrix.data[0]);
+	return std::isnan(rad) ? 0.0f : -rad * 180.0f / M_PI;
 }
 
-// this would convert screen pixel co-ord to physics world co-ord
-Vector3 toWorldPos(const sf::Vector2i& screenPos) {
-	return {
-		(screenPos.x - WINDOW_WIDTH / 2.0f) / PIXELS_PER_METER,
-		-(screenPos.y - WINDOW_HEIGHT / 2.0f) / PIXELS_PER_METER,
-		0.0f
-	};
-}
-
-// AABB check i.e, axis-aligned
-bool isPointInsideAABB(const Vector3& point, const RigidBody* body) {
-	if (body->shape == NULL or body->shape->getType() != BOX) {
-		return false;
-	}
-
-	BoundingBox* box = (BoundingBox*)body->shape;
-	Vector3 pos = body->position;
-	Vector3 halfExtents = box->halfExtents;
-
-	return (point.x >= pos.x - halfExtents.x and point.x <= pos.x + halfExtents.x and point.y >= pos.y - halfExtents.y and
-		point.y <= pos.y + halfExtents.y);
+RigidBody* createBox(Vector3 position, Vector3 halfExtents, float mass, float restitution) {
+	RigidBody* box = new RigidBody();
+	box->position = position;
+	box->inverseMass = (mass > 0.0f) ? 1.0f / mass : 0.0f;
+	box->restitution = restitution;
+	BoundingBox* shapeData = new BoundingBox(halfExtents);
+	box->shape = shapeData;
+	Vector3 fullDims = halfExtents * 2.0f;
+	box->inverseInertiaTensor.setInverseInertiaTensorCuboid(mass, fullDims);
+	box->orientation.normalize();
+	return box;
 }
 
 int main() {
-	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "CPhysicsEngine - Box Collision Test");
+	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "CPhysicsEngine - Uniform Grid Test");
 	window.setFramerateLimit(60);
 
-	Vector3 gravity = Vector3(0.0f, -5.0f, 0.0f);
-	PhysicsWorld world(gravity);
+	Vector3 gravity = Vector3(0.0f, -9.81f, 0.0f);
+	PhysicsWorld world(gravity, 4.0f);
 	float timeStep = 1.0f / 60.0f;
 
 	std::vector<RigidBody*> bodies;
+	std::vector<sf::Shape*> shapes;
+	std::vector<CollisionShape*> shapeDataToDelete;
 
-	auto* box1 = new RigidBody();
-	box1->position = Vector3(-10.0f, 0.0f, 0.0f);
-	box1->velocity = Vector3(5.0f, 2.0f, 0.0f);
-	box1->inverseMass = 1.0f / 5.0f;
-	box1->restitution = 0.6f;
-	auto shape1Data = new BoundingBox(Vector3(1.5f, 1.0f, 1.0f));
-	box1->shape = shape1Data;
-	box1->inverseInertiaTensor.setInverseInertiaTensorCuboid(5.0f, Vector3(3.0f, 2.0f, 2.0f));
-	box1->orientation = Quaternion(cosf(0.1f), 0, 0, sinf(0.1f));
-	box1->orientation.normalize();
+	RigidBody* floorBody = createBox(Vector3(0.0f, -18.0f, 0.0f), Vector3(30.0f, 1.0f, 1.0f), 0.0f, 0.5f);
+	// Mass 0 = static
+	world.addBody(floorBody);
+	bodies.push_back(floorBody);
+	shapeDataToDelete.push_back(floorBody->shape);
 
-	auto* box2 = new RigidBody();
-	box2->position = Vector3(10.0f, 2.0f, 0.0f);
-	box2->velocity = Vector3(-5.0f, 0.0f, 0.0f);
-	box2->inverseMass = 1.0f / 8.0f;
-	box2->restitution = 0.6f;
-	auto* shape2Data = new BoundingBox(Vector3(1.0f, 1.5f, 1.0f));
-	box2->shape = shape2Data;
-	box2->inverseInertiaTensor.setInverseInertiaTensorCuboid(8.0f, Vector3(2.0f, 3.0f, 2.0f));
-	box2->orientation = Quaternion(cosf(-0.3f), 0, 0, sinf(-0.3f));
-	box2->orientation.normalize();
+	auto* floorGfx = new sf::RectangleShape();
+	auto* floorBB = static_cast<BoundingBox*>(floorBody->shape);
+	floorGfx->setSize(sf::Vector2f(floorBB->halfExtents.x * 2.0f * PIXELS_PER_METER,
+	                               floorBB->halfExtents.y * 2.0f * PIXELS_PER_METER));
+	floorGfx->setOrigin(floorBB->halfExtents.x * PIXELS_PER_METER,
+	                    floorBB->halfExtents.y * PIXELS_PER_METER);
+	floorGfx->setFillColor(sf::Color::White);
+	shapes.push_back(floorGfx);
 
-	world.addBody(box1);
-	world.addBody(box2);
-	bodies.push_back(box1);
-	bodies.push_back(box2);
 
-	std::vector<sf::RectangleShape> shapes;
+	int numBoxesX = 200;
+	float spacing = 5.0f;
+	float startX = -(numBoxesX - 1.0f) * spacing / 2.0f;
 
-	sf::RectangleShape box1Gfx;
-	box1Gfx.setSize(sf::Vector2f(shape1Data->halfExtents.x * 2.0f * PIXELS_PER_METER,
-	                             shape1Data->halfExtents.y * 2.0f * PIXELS_PER_METER));
-	box1Gfx.setOrigin(shape1Data->halfExtents.x * PIXELS_PER_METER,
-	                  shape1Data->halfExtents.y * PIXELS_PER_METER);
-	box1Gfx.setFillColor(sf::Color::Blue);
-	shapes.push_back(box1Gfx);
+	for (int i = 0; i < numBoxesX; ++i) {
+		float xPos = startX + i * spacing;
+		RigidBody* fallingBox = createBox(Vector3(xPos, 10.0f + (i % 2) * 2.0f, 0.0f), Vector3(1.0f, 1.0f, 1.0f), 10.0f,
+		                                  0.5f);
+		fallingBox->orientation = Quaternion(cosf(i * 0.1f), 0, 0, sinf(i * 0.1f));
+		fallingBox->orientation.normalize();
 
-	sf::RectangleShape box2Gfx;
-	box2Gfx.setSize(sf::Vector2f(shape2Data->halfExtents.x * 2.0f * PIXELS_PER_METER,
-	                             shape2Data->halfExtents.y * 2.0f * PIXELS_PER_METER));
-	box2Gfx.setOrigin(shape2Data->halfExtents.x * PIXELS_PER_METER,
-	                  shape2Data->halfExtents.y * PIXELS_PER_METER);
-	box2Gfx.setFillColor(sf::Color::Green);
-	shapes.push_back(box2Gfx);
+		world.addBody(fallingBox);
+		bodies.push_back(fallingBox);
+		shapeDataToDelete.push_back(fallingBox->shape);
 
-	RigidBody* draggedBody = nullptr;
-	Vector3 dragOffset = Vector3(0, 0, 0);
-
-	// NOTE: The game loop
+		sf::RectangleShape* boxGfx = new sf::RectangleShape();
+		BoundingBox* boxBB = static_cast<BoundingBox*>(fallingBox->shape);
+		boxGfx->setSize(sf::Vector2f(boxBB->halfExtents.x * 2.0f * PIXELS_PER_METER,
+		                             boxBB->halfExtents.y * 2.0f * PIXELS_PER_METER));
+		boxGfx->setOrigin(boxBB->halfExtents.x * PIXELS_PER_METER,
+		                  boxBB->halfExtents.y * PIXELS_PER_METER);
+		boxGfx->setFillColor(sf::Color(255, 50 + i * 40, 10 + i * 12));
+		shapes.push_back(boxGfx);
+	}
 
 	while (window.isOpen()) {
-		sf::Event event{};
+		sf::Event event;
 		while (window.pollEvent(event)) {
 			if (event.type == sf::Event::Closed) {
 				window.close();
 			}
-			else if (event.type == sf::Event::MouseButtonPressed) {
-				if (event.mouseButton.button == sf::Mouse::Left) {
-					Vector3 mouseWorldPos = toWorldPos(sf::Mouse::getPosition(window));
-
-					for (auto body : bodies) {
-						if (body->inverseMass > 0.0f and isPointInsideAABB(mouseWorldPos, body)) {
-							draggedBody = body;
-							dragOffset = mouseWorldPos - body->position;
-							break;
-						}
-					}
-				}
-			}
-			else if (event.type == sf::Event::MouseButtonReleased) {
-				if (event.mouseButton.button == sf::Mouse::Left) {
-					if (draggedBody != nullptr) {
-						draggedBody = nullptr;
-					}
-				}
-			}
-			else if (event.type == sf::Event::MouseMoved) {
-				if (draggedBody != nullptr) {
-					Vector3 mouseWorldPos = toWorldPos(sf::Mouse::getPosition(window));
-					draggedBody->position = mouseWorldPos - dragOffset;
-					draggedBody->velocity = Vector3(0, 0, 0);
-					draggedBody->angularVelocity = Vector3(0, 0, 0);
-				}
-			}
 		}
 
-		// NOTE: updating physics state
-		if (draggedBody == nullptr) {
-			world.step(timeStep);
-		}
+		world.step(timeStep);
 
-		// NOTE: drawing actual stuff;
 		for (size_t i = 0; i < bodies.size(); ++i) {
 			RigidBody* body = bodies[i];
-			sf::RectangleShape& shape = shapes[i];
+			sf::Shape* shape = shapes[i];
 
-			// NOTE: updating graphics from physics
-			shape.setPosition(toScreenPos(body->position));
-			shape.setRotation(toDegrees(body->rotationMatrix));
+			shape->setPosition(toScreenPos(body->position));
+			shape->setRotation(toDegrees(body->rotationMatrix));
 		}
 
 		window.clear(sf::Color::Black);
-		for (const auto& shape : shapes) {
-			window.draw(shape);
+		for (const auto* shape : shapes) {
+			window.draw(*shape);
 		}
 		window.display();
 	}
 
-	delete shape1Data;
-	delete shape2Data;
-	delete box1;
-	delete box2;
-
-	return 0;
+	for (CollisionShape* s : shapeDataToDelete) {
+		delete s;
+	}
+	for (RigidBody* b : bodies) {
+		delete b;
+	}
+	for (sf::Shape* s : shapes) {
+		delete s;
+	}
 }

@@ -13,17 +13,25 @@
 #include <cmath>
 
 #include "RigidBody.h"
+#include "../Broadphase/UniformGrid.h"
 #include "../Collision/CollisionManifold.h"
 #include "../Collision/BoundingSphere.h"
 #include "../Collision/BoundingBox.h"
 
 class PhysicsWorld {
 	std::vector<RigidBody*> bodies;
-	Vector3 gravity;
 	std::vector<CollisionManifold> collisions;
 
+	Vector3 gravity;
+
+	UniformGrid broadphaseGrid;
+
+	float sleepEpsilonSq = 0.01f * 0.01f;
+	float sleepDuration = 0.5f;
+	float wakeImpulseThresholdSq = 0.1f * 0.1f;
+
 public:
-	PhysicsWorld(Vector3 gravity) {
+	PhysicsWorld(Vector3 gravity, float gridCellSize = 4.0f) : broadphaseGrid(gridCellSize) {
 		this->gravity = gravity;
 	}
 
@@ -35,14 +43,26 @@ public:
 		collisions.clear();
 
 		for (const auto body : bodies) {
-			if (body->inverseMass > 0.0) {
+			if (body->isAwake and body->inverseMass > 0.0f) {
 				body->addForce(gravity * (1.0f / body->inverseMass));
 			}
-
 			body->integrate(dt);
 		}
-		detectCollisions();
+
+		broadphaseGrid.clear();
+		for (const auto body : bodies) {
+			broadphaseGrid.addBody(body);
+		}
+
+		std::vector<std::pair<RigidBody*, RigidBody*>> potentialPairs = broadphaseGrid.getPotentialCollisions();
+
+		detectCollisions(potentialPairs);
+
 		resolveCollisions();
+
+		for (const auto body : bodies) {
+			body->updateSleepState(dt, sleepEpsilonSq, sleepDuration);
+		}
 	}
 
 private:
@@ -51,16 +71,31 @@ private:
 		float max;
 	};
 
-	void detectCollisions() {
-		for (size_t i = 0; i < bodies.size(); i++) {
-			for (size_t j = i + 1; j < bodies.size(); j++) {
-				RigidBody* bodyA = bodies[i];
-				RigidBody* bodyB = bodies[j];
+	// void detectCollisions() {
+	// 	for (size_t i = 0; i < bodies.size(); i++) {
+	// 		for (size_t j = i + 1; j < bodies.size(); j++) {
+	// 			RigidBody* bodyA = bodies[i];
+	// 			RigidBody* bodyB = bodies[j];
+	//
+	// 			if (bodyA->shape == nullptr || bodyB->shape == nullptr) {
+	// 				continue;
+	// 			}
+	//
+	// 			findCollisionFeatures(bodyA, bodyB);
+	// 		}
+	// 	}
+	// }
 
-				if (bodyA->shape == nullptr || bodyB->shape == nullptr) {
-					continue;
-				}
+	void detectCollisions(const std::vector<std::pair<RigidBody*, RigidBody*>>& pairs) {
+		for (const auto pair : pairs) {
+			RigidBody* bodyA = pair.first;
+			RigidBody* bodyB = pair.second;
 
+			if ((!bodyA->isAwake and bodyA->inverseMass == 0.0f) and (!bodyB->isAwake and bodyB->inverseMass == 0.0f)) {
+				continue;
+			}
+
+			if (bodyA->shape != nullptr and bodyB->shape != nullptr) {
 				findCollisionFeatures(bodyA, bodyB);
 			}
 		}
@@ -126,9 +161,9 @@ private:
 		testAxes[axisCount++] = axesB[1];
 		testAxes[axisCount++] = axesB[2];
 
-		for (size_t i = 0; i < 3; i++) {
-			for (size_t j = 0; j < 3; j++) {
-				Vector3 cross = axesA[i].cross(axesB[j]);
+		for (auto i : axesA) {
+			for (auto j : axesB) {
+				Vector3 cross = i.cross(j);
 				float magSq = cross.magnitudeSquared();
 				if (magSq > 0.001f) {
 					testAxes[axisCount++] = cross * (1.0f / std::sqrt(magSq));
@@ -180,24 +215,31 @@ private:
 		verticesB_local[0].x = halfExtentsB.x;
 		verticesB_local[0].y = halfExtentsB.y;
 		verticesB_local[0].z = halfExtentsB.z;
+
 		verticesB_local[1].x = -halfExtentsB.x;
 		verticesB_local[1].y = halfExtentsB.y;
 		verticesB_local[1].z = halfExtentsB.z;
+
 		verticesB_local[2].x = halfExtentsB.x;
 		verticesB_local[2].y = -halfExtentsB.y;
 		verticesB_local[2].z = halfExtentsB.z;
+
 		verticesB_local[3].x = halfExtentsB.x;
 		verticesB_local[3].y = halfExtentsB.y;
 		verticesB_local[3].z = -halfExtentsB.z;
+
 		verticesB_local[4].x = -halfExtentsB.x;
 		verticesB_local[4].y = -halfExtentsB.y;
 		verticesB_local[4].z = halfExtentsB.z;
+
 		verticesB_local[5].x = -halfExtentsB.x;
 		verticesB_local[5].y = halfExtentsB.y;
 		verticesB_local[5].z = -halfExtentsB.z;
+
 		verticesB_local[6].x = halfExtentsB.x;
 		verticesB_local[6].y = -halfExtentsB.y;
 		verticesB_local[6].z = -halfExtentsB.z;
+
 		verticesB_local[7].x = -halfExtentsB.x;
 		verticesB_local[7].y = -halfExtentsB.y;
 		verticesB_local[7].z = -halfExtentsB.z;
@@ -205,8 +247,8 @@ private:
 		float maxPenetration = -FLT_MAX;
 		Vector3 contactPoint = centerB;
 
-		for (size_t i = 0; i < 8; i++) {
-			Vector3 vertexB_world = rotB.transform(verticesB_local[i]) + centerB;
+		for (auto i : verticesB_local) {
+			Vector3 vertexB_world = rotB.transform(i) + centerB;
 			float vertexPenetration = (boxA->position - vertexB_world).dot(collisionNormal);
 
 			if (vertexPenetration > maxPenetration) {
@@ -224,13 +266,13 @@ private:
 		// collisions.push_back(CollisionManifold(boxA, boxB, collisionNormal, minOverlap, contactPoint));
 	}
 
-	float clamp(float value, float minVal, float maxVal) {
+	static float clamp(float value, float minVal, float maxVal) {
 		return std::max(minVal, std::min(value, maxVal));
 	}
 
 	void checkSphereBox(RigidBody* sphereBody, RigidBody* boxBody) {
-		BoundingSphere* sphere = static_cast<BoundingSphere*>(sphereBody->shape);
-		BoundingBox* box = static_cast<BoundingBox*>(boxBody->shape);
+		auto* sphere = dynamic_cast<BoundingSphere*>(sphereBody->shape);
+		auto* box = dynamic_cast<BoundingBox*>(boxBody->shape);
 
 		Vector3 sphereCenterWorld = sphereBody->position;
 		Vector3 sphereCenterLocal = boxBody->rotationMatrix.transformTranspose(
@@ -251,7 +293,6 @@ private:
 		if (distanceSquared < radiusSquared) {
 			// this means there is a collision
 			float distance = std::sqrt(distanceSquared);
-			Vector3 normal = (distance > 0.0f) ? dir / distance : Vector3(0, 1, 0);
 			Vector3 normal_B_to_A = (distance > 0.0f) ? dir / distance : Vector3(0, 1, 0);
 			float penetration = sphere->radius - distance;
 			Vector3 contactPoint = closestPointWorld;
@@ -272,39 +313,50 @@ private:
 
 			auto* A = manifold.bodyA;
 			auto* B = manifold.bodyB;
-			Vector3 normal = manifold.contactNormal;
-			float penetration = manifold.penetrationDepth;
 
-			for (size_t i = 0; i < manifold.numContactPoints; i++) {
+			// note: wake up check start
+			bool bodyAWasAsleep = !A->isAwake;
+			bool bodyBWasAsleep = !B->isAwake;
+			if (bodyAWasAsleep or bodyBWasAsleep) {
+				Vector3 relVel = B->velocity - A->velocity;
+				if (relVel.magnitudeSquared() > sleepEpsilonSq) {
+					if (bodyAWasAsleep and A->inverseMass > 0.0f)
+						A->setAwake(true);
+					if (bodyBWasAsleep and B->inverseMass > 0.0f)
+						B->setAwake(true);
+				}
+			}
+			// note: wake up check ends here
+
+			// note: skipping resolution if A and B are both asleep
+			if ((!A->isAwake and B->inverseMass == 0.0f) and (!B->isAwake and B->inverseMass == 0.0f))
+				continue;
+			float totalImpulseMagnitudeSq = 0.0f;
+			float totalMagnitudeSq = 0.0f;
+			for (int i = 0; i < manifold.numContactPoints; i++) {
 				Vector3 contactPoint = manifold.contactPoints[i];
-
 				Vector3 rA = contactPoint - A->position;
 				Vector3 rB = contactPoint - B->position;
-
 				Vector3 velA = A->velocity + A->angularVelocity.cross(rA);
 				Vector3 velB = B->velocity + B->angularVelocity.cross(rB);
-				Vector3 relVel = velB - velA;
-
-				float velAlongNormal = relVel.dot(normal);
+				Vector3 normal = manifold.contactNormal;
 				float penetration = manifold.penetrationDepth;
-
+				float velAlongNormal = (velB - velA).dot(manifold.contactNormal);
 				if (velAlongNormal > 0.0f) {
 					continue;
 				}
 
 				float e = std::min(A->restitution, B->restitution);
 
-				Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(normal))).cross(rA);
-				Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(normal))).cross(rB);
+				Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(manifold.contactNormal))).cross(rA);
+				Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(manifold.contactNormal))).cross(rB);
 
-				float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(normal);
+				float j = -(1.0f + e) * velAlongNormal;
+				float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(manifold.contactNormal);
 
 				if (denominator <= 0.0f) {
 					continue;
 				}
-
-				float j = -(1.0f + e) * velAlongNormal;
-				j /= denominator;
 
 				Vector3 impulse = normal * j;
 				A->velocity -= impulse * A->inverseMass;
@@ -315,19 +367,33 @@ private:
 
 				A->angularVelocity += A->inverseInertiaTensor.transform(torqueImpulseA);
 				B->angularVelocity += B->inverseInertiaTensor.transform(torqueImpulseB);
+
+				totalImpulseMagnitudeSq += impulse.magnitudeSquared();
 			}
 
-			const float totalInverseMass = A->inverseMass + B->inverseMass;
-			if (totalInverseMass <= 0.0f) {
-				continue;
+			if ((bodyAWasAsleep or bodyBWasAsleep) and (totalImpulseMagnitudeSq > wakeImpulseThresholdSq)) {
+				if (bodyAWasAsleep and A->inverseMass > 0.0f) {
+					A->setAwake(true);
+				}
+				if (bodyBWasAsleep and B->inverseMass > 0.0f) {
+					B->setAwake(true);
+				}
 			}
 
-			const float percent = 0.2f;
-			const float slop = 0.01f;
-			Vector3 correction = normal * (std::max(penetration - slop, 0.0f) / totalInverseMass) * percent;
+			if (A->isAwake or B->isAwake) {
+				const float totalInverseMass = A->inverseMass + B->inverseMass;
+				if (totalInverseMass <= 0.0f) {
+					continue;
+				}
 
-			A->position -= correction * A->inverseMass;
-			B->position += correction * B->inverseMass;
+				const float percent = 0.2f;
+				const float slop = 0.01f;
+				Vector3 correction = manifold.contactNormal * (std::max(manifold.penetrationDepth - slop, 0.0f) /
+					totalInverseMass) * percent;
+
+				A->position -= correction * A->inverseMass;
+				B->position += correction * B->inverseMass;
+			}
 		}
 	}
 

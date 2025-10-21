@@ -15,6 +15,7 @@ add_executable(CPhysicsEngine main.cpp
         src/Collision/BoundingSphere.h
         src/Collision/CollisionManifold.h
         src/Collision/CollisionShape.h
-        src/Collision/BoundingBox.h)
+        src/Collision/BoundingBox.h
+        src/Broadphase/UniformGrid.h)
 
 target_link_libraries(CPhysicsEngine sfml-graphics sfml-window sfml-system)
