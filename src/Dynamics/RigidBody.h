@@ -167,7 +167,6 @@ public:
 		clearAccumulators();
 	}
 
-public:
 	void updateWorldAABB() {
 		if (shape == nullptr) {
 			worldAABBMin = position;

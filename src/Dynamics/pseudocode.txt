@@ -1,116 +1,82 @@
-CLASS RigidBody:
-    // ... existing properties ...
-    float restitution;
+// ... (Includes, Constants, Helper Functions, createBox) ...
 
-    // --- NEW FRICTION Properties ---
-PUBLIC:
-    float staticFriction;
-    float dynamicFriction; // Also called kinetic friction
+FUNCTION main():
+    // ... (Window, ImGui Init, Physics Setup) ...
 
-PUBLIC:
-    // CONSTRUCTOR
-    RigidBody() :
-        // ... existing initializers ...
-        restitution(0.5f), // Example value
-        staticFriction(0.6f), // Example value (e.g., rubber on concrete)
-        dynamicFriction(0.5f) // Example value (kinetic < static)
-    {}
+    std::vector<RigidBody*> bodies;
+    std::vector<sf::Shape*> shapes;
+    std::vector<CollisionShape*> shapeDataToDelete;
 
-    // ... rest of RigidBody ...
+    // --- Create Initial Objects (Floor) ---
+    // ... (Create floorBody, floorGfx, add to vectors/world) ...
 
+    // --- Game Loop ---
+    WHILE window.isOpen():
+        // ... (Event Handling Loop: pollEvent, ImGui::SFML::ProcessEvent, window close) ...
 
+        // --- Update ImGui ---
+        sf::Time deltaTime = deltaClock.restart();
+        ImGui::SFML::Update(window, deltaTime);
+        ImGui::NewFrame();
 
-    ---
+        // --- Define ImGui UI ---
+        ImGui::Begin("Info & Controls");
+        ImGui::Text("FPS: %.1f", io.Framerate);
+        // Add physics info if desired
 
+        // --- NEW: Spawn Button ---
+        IF ImGui::Button("Spawn Box") THEN
+            // Create a new box when button clicked
+            Vector3 spawnPos( ((rand() % 200) / 100.0f - 1.0f) * 5.0f, // Random X between -5 and +5
+                               15.0f, // Spawn high up
+                               0.0f );
+            Vector3 boxHalfExtents(1.0f, 1.0f, 1.0f); // Standard 2x2x2 box
+            float boxMass = 5.0f;
+            float boxRestitution = 0.2f;
+            float boxStaticFriction = 0.6f;
+            float boxDynamicFriction = 0.5f;
 
-    PRIVATE:
-      FUNCTION void resolveCollisions()
-          FOR EACH manifold IN collisions:
-              IF manifold.numContactPoints == 0 THEN CONTINUE;
+            // Create physics body
+            RigidBody* newBox = createBox(spawnPos, boxHalfExtents, boxMass, boxRestitution, boxStaticFriction, boxDynamicFriction);
+            // Optionally give it a random initial rotation
+            // newBox->orientation = ... ; newBox->orientation.normalize();
 
-              RigidBody* A = manifold.bodyA;
-              RigidBody* B = manifold.bodyB;
-              Vector3 normal = manifold.contactNormal;
-              float penetration = manifold.penetrationDepth;
+            // Add to physics world
+            world.addBody(newBox);
 
-              // Combine friction properties (e.g., average or multiply)
-              float staticFriction = (A->staticFriction + B->staticFriction) * 0.5f;
-              float dynamicFriction = (A->dynamicFriction + B->dynamicFriction) * 0.5f;
+            // Keep track for graphics update and cleanup
+            bodies.push_back(newBox);
+            shapeDataToDelete.push_back(newBox->shape); // Store shape data ptr for later deletion
 
-              // --- Wake/Sleep checks (as before) ---
-              // ...
+            // Create graphics shape
+            sf::RectangleShape* newBoxGfx = new sf::RectangleShape();
+            newBoxGfx->setSize({boxHalfExtents.x * 2.0f * PIXELS_PER_METER,
+                                boxHalfExtents.y * 2.0f * PIXELS_PER_METER});
+            newBoxGfx->setOrigin({boxHalfExtents.x * PIXELS_PER_METER,
+                                  boxHalfExtents.y * PIXELS_PER_METER});
+            // Assign a random color (requires <cstdlib> for rand)
+            newBoxGfx->setFillColor(sf::Color(rand() % 200 + 55, rand() % 200 + 55, rand() % 200 + 55));
+            shapes.push_back(newBoxGfx); // Add graphics shape pointer to list
 
-              // --- Iterate through contact points ---
-              FOR i FROM 0 TO manifold.numContactPoints - 1:
-                  Vector3 contactPoint = manifold.contactPoints[i];
-                  Vector3 rA = contactPoint - A->position;
-                  Vector3 rB = contactPoint - B->position;
+        END IF
+        // --- End Spawn Button ---
 
-                  // --- Resolve Normal Impulse (as before) ---
-                  Vector3 velA = A->velocity + A->angularVelocity.cross(rA);
-                  Vector3 velB = B->velocity + B->angularVelocity.cross(rB);
-                  Vector3 relVel = velB - velA;
-                  float velAlongNormal = relVel.dot(normal);
+        ImGui::End(); // End "Info & Controls" window
+        ImGui::EndFrame();
 
-                  // Apply restitution impulse only if separating velocity is significant enough
-                  // (Helps prevent jitter when objects are almost resting)
-                  float restitutionBias = 0.0f; // Could add a small velocity bias here if needed
-                  float e = std::min(A->restitution, B->restitution);
-                  float j_n = 0.0f; // Normal impulse magnitude
+        // --- Physics Step ---
+        // ... (world.step(timeStep)) ... // No changes here
 
-                  IF velAlongNormal < -restitutionBias THEN // Check if objects are colliding
-                      // Calculate normal impulse 'j_n' (denominator includes rotational terms)
-                      Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(normal))).cross(rA);
-                      Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(normal))).cross(rB);
-                      float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(normal);
+        // --- Update Graphics ---
+        // ... (Loop through bodies/shapes, update position/rotation) ... // No changes here
 
-                      IF denominator > 0.0001f THEN // Avoid division by zero
-                          j_n = -(1.0f + e) * velAlongNormal / denominator;
-                          // --- Apply Normal Impulse ---
-                          Vector3 impulseN = normal * j_n;
-                          A->velocity -= impulseN * A->inverseMass;
-                          B->velocity += impulseN * B->inverseMass;
-                          A->angularVelocity += A->inverseInertiaTensor.transform(rA.cross(impulseN) * -1.0f);
-                          B->angularVelocity += B->inverseInertiaTensor.transform(rB.cross(impulseN));
-                      END IF
-                  END IF
+        // --- Draw ---
+        // ... (window.clear, draw shapes, ImGui::Render, ImGui::SFML::Render, window.display) ... // No changes here
 
-                  // --- Resolve Tangential (Friction) Impulse ---
-                  // Recalculate relative velocity *after* normal impulse is applied
-                  velA = A->velocity + A->angularVelocity.cross(rA);
-                  velB = B->velocity + B->angularVelocity.cross(rB);
-                  relVel = velB - velA;
+    END WHILE // End game loop
 
-                  // Calculate tangential velocity
-                  Vector3 tangentVel = relVel - normal * relVel.dot(normal);
-                  float tangentSpeedSq = tangentVel.magnitudeSquared();
+    // --- Cleanup ---
+    // ... (Cleanup loops remain the same, will handle newly added objects) ...
 
-                  IF tangentSpeedSq > 0.0001f THEN // If there is tangential motion
-                      Vector3 tangentDir = tangentVel / std::sqrt(tangentSpeedSq); // Normalized direction of sliding
-
-                      // Calculate impulse needed to stop sliding along this tangent
-                      Vector3 termA_t = (A->inverseInertiaTensor.transform(rA.cross(tangentDir))).cross(rA);
-                      Vector3 termB_t = (B->inverseInertiaTensor.transform(rB.cross(tangentDir))).cross(rB);
-                      float denominator_t = A->inverseMass + B->inverseMass + (termA_t + termB_t).dot(tangentDir);
-
-                      IF denominator_t > 0.0001f THEN
-                          float jt_mag_needed = -relVel.dot(tangentDir) / denominator_t; // Impulse magnitude needed
-
-                          // Clamp friction impulse using Coulomb model
-                          float frictionLimit = staticFriction * std::abs(j_n); // Max static friction impulse
-                          float jt_mag_clamped = std::max(-frictionLimit, std::min(jt_mag_needed, frictionLimit));
-
-                          // --- Apply Friction Impulse ---
-                          Vector3 impulseT = tangentDir * jt_mag_clamped;
-                          A->velocity -= impulseT * A->inverseMass;
-                          B->velocity += impulseT * B->inverseMass;
-                          A->angularVelocity += A->inverseInertiaTensor.transform(rA.cross(impulseT) * -1.0f);
-                          B->angularVelocity += B->inverseInertiaTensor.transform(rB.cross(impulseT));
-                      END IF
-                  END IF
-              END FOR // End loop through contact points
-
-              // --- Positional Correction (Applied ONCE, as before) ---
-              // ...
-          END FOR // End loop through manifolds
-      END FUNCTION
+    RETURN 0;
+END FUNCTION
