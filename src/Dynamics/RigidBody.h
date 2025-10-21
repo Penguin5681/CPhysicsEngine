@@ -22,6 +22,8 @@ public:
 	float restitution; // note: this will range between 0.0 to 1.0 (both inclusive)
 	float sleepTimer;
 	float motion;
+	float staticFriction; // note: this is when the surfaces are not sliding and are static
+	float dynamicFriction; // note: also known as kinetic friction
 
 	bool isAwake;
 
@@ -44,8 +46,8 @@ private:
 	Vector3 accumulatedTorque;
 
 public:
-	RigidBody() : restitution(0.7f), sleepTimer(0.0f), motion(FLT_MAX), isAwake(true), orientation(1, 0, 0, 0),
-	              shape(nullptr) {}
+	RigidBody() : restitution(0.7f), sleepTimer(0.0f), motion(FLT_MAX), staticFriction(0.6f), dynamicFriction(0.5f),
+	              isAwake(true), orientation(1, 0, 0, 0), shape(nullptr) {}
 
 	void setAwake(bool awake = true) {
 		if (awake) {
@@ -165,18 +167,13 @@ public:
 		clearAccumulators();
 	}
 
-private:
+public:
 	void updateWorldAABB() {
 		if (shape == nullptr) {
 			worldAABBMin = position;
 			worldAABBMax = position;
 			return;
 		}
-
-		/*
-
-		 *
-		 */
 
 		if (shape->getType() == SPHERE) {
 			auto* sphere = (BoundingSphere*)shape;
@@ -196,8 +193,7 @@ private:
 				std::abs(worldZ.x);
 			float extentY = halfExtents.x * std::abs(worldX.y) + halfExtents.y * std::abs(worldY.y) + halfExtents.z *
 				std::abs(worldZ.y);
-			float extentZ = halfExtents.x * std::abs(worldX.z) + halfExtents.z * std::abs(worldY.z) + halfExtents.z *
-				std::abs(worldZ.z);
+			float extentZ = halfExtents.x * std::abs(worldX.z) + halfExtents.y * std::abs(worldY.z) + halfExtents.z * std::abs(worldZ.z);
 
 			worldAABBMin = Vector3(position.x - extentX, position.y - extentY, position.z - extentZ);
 			worldAABBMax = Vector3(position.x + extentX, position.y + extentY, position.z + extentZ);

@@ -30,6 +30,123 @@ class PhysicsWorld {
 	float sleepDuration = 0.5f;
 	float wakeImpulseThresholdSq = 0.1f * 0.1f;
 
+	struct Face {
+		std::vector<Vector3> vertices;
+		Vector3 normal;
+	};
+
+	Face getBoxFace(const RigidBody* boxBody, int faceIndex) {
+		Face face;
+		BoundingBox* box = (BoundingBox*)boxBody->shape;
+		const Matrix3x3& rot = boxBody->rotationMatrix;
+		const Vector3& center = boxBody->position;
+		const Vector3& h = box->halfExtents;
+
+		Vector3 localVerts[4];
+		if (faceIndex == 0) {
+			face.normal = rot.getColumn(0);
+			localVerts[0] = Vector3(h.x, h.y, h.z);
+			localVerts[1] = Vector3(h.x, h.y, -h.z);
+			localVerts[2] = Vector3(h.x, -h.y, -h.z);
+			localVerts[3] = Vector3(h.x, -h.y, h.z);
+		}
+		else if (faceIndex == 1) {
+			face.normal = rot.getColumn(0) * -1.0f; // -X direction
+			localVerts[0] = Vector3(-h.x, h.y, -h.z);
+			localVerts[1] = Vector3(-h.x, h.y, h.z);
+			localVerts[2] = Vector3(-h.x, -h.y, h.z);
+			localVerts[3] = Vector3(-h.x, -h.y, -h.z);
+		}
+		else if (faceIndex == 2) {
+			face.normal = rot.getColumn(1); // +Y direction
+			localVerts[0] = Vector3(-h.x, h.y, -h.z);
+			localVerts[1] = Vector3(-h.x, h.y, h.z);
+			localVerts[2] = Vector3(h.x, h.y, h.z);
+			localVerts[3] = Vector3(h.x, h.y, -h.z);
+		}
+		else if (faceIndex == 3) {
+			face.normal = rot.getColumn(1) * -1.0f; // -Y direction
+			localVerts[0] = Vector3(-h.x, -h.y, h.z);
+			localVerts[1] = Vector3(-h.x, -h.y, -h.z);
+			localVerts[2] = Vector3(h.x, -h.y, -h.z);
+			localVerts[3] = Vector3(h.x, -h.y, h.z);
+		}
+		else if (faceIndex == 4) {
+			face.normal = rot.getColumn(2); // +Z direction
+			localVerts[0] = Vector3(-h.x, h.y, h.z);
+			localVerts[1] = Vector3(-h.x, -h.y, h.z);
+			localVerts[2] = Vector3(h.x, -h.y, h.z);
+			localVerts[3] = Vector3(h.x, h.y, h.z);
+		}
+		else if (faceIndex == 5) {
+			face.normal = rot.getColumn(2) * -1.0f; // -Z direction
+			localVerts[0] = Vector3(-h.x, -h.y, -h.z);
+			localVerts[1] = Vector3(-h.x, h.y, -h.z);
+			localVerts[2] = Vector3(h.x, h.y, -h.z);
+			localVerts[3] = Vector3(h.x, -h.y, -h.z);
+		}
+
+		for (int i = 0; i < 4; i++) {
+			face.vertices.push_back(rot.transform(localVerts[i]) + center);
+		}
+
+		return face;
+	}
+
+	std::vector<Vector3> clipPolygonAgainstPlane(
+		const std::vector<Vector3>& inVertices,
+		const Vector3& planeNormal,
+		float planeDist
+	) {
+		std::vector<Vector3> outVertices;
+		if (inVertices.empty()) {
+			return outVertices;
+		}
+
+		Vector3 prevVertex = inVertices.back();
+		float prevDist = planeNormal.dot(prevVertex) - planeDist;
+
+		for (auto currentVertex : inVertices) {
+			float currentDist = planeNormal.dot(currentVertex) - planeDist;
+
+			if (prevDist * currentDist < 0.0f) {
+				float t = prevDist / (prevDist - currentDist);
+				Vector3 intersection = prevVertex + (currentVertex - prevVertex) * t;
+				outVertices.push_back(intersection);
+			}
+
+			if (currentDist >= 0.0f) {
+				outVertices.push_back(currentVertex);
+			}
+
+			prevVertex = currentVertex;
+			prevDist = currentDist;
+		}
+
+		return outVertices;
+	}
+
+	int findBestFace(const RigidBody* boxBody, const Vector3& normal) {
+		float maxDot = -FLT_MAX;
+		int bestFaceIndex = -1;
+		const Matrix3x3& rot = boxBody->rotationMatrix;
+
+		if (std::abs(normal.dot(rot.getColumn(0))) > maxDot) {
+			maxDot = std::abs(normal.dot(rot.getColumn(0)));
+			bestFaceIndex = (normal.dot(rot.getColumn(0)) > 0) ? 0 : 1;
+		}
+		if (std::abs(normal.dot(rot.getColumn(1))) > maxDot) {
+			maxDot = std::abs(normal.dot(rot.getColumn(1)));
+			bestFaceIndex = (normal.dot(rot.getColumn(1)) > 0) ? 2 : 3;
+		}
+		if (std::abs(normal.dot(rot.getColumn(2))) > maxDot) {
+			maxDot = std::abs(normal.dot(rot.getColumn(2)));
+			bestFaceIndex = (normal.dot(rot.getColumn(2)) > 0) ? 4 : 5;
+		}
+
+		return bestFaceIndex;
+	}
+
 public:
 	PhysicsWorld(Vector3 gravity, float gridCellSize = 4.0f) : broadphaseGrid(gridCellSize) {
 		this->gravity = gravity;
@@ -156,14 +273,13 @@ private:
 		testAxes[axisCount++] = axesA[0];
 		testAxes[axisCount++] = axesA[1];
 		testAxes[axisCount++] = axesA[2];
-
 		testAxes[axisCount++] = axesB[0];
 		testAxes[axisCount++] = axesB[1];
 		testAxes[axisCount++] = axesB[2];
 
-		for (auto i : axesA) {
-			for (auto j : axesB) {
-				Vector3 cross = i.cross(j);
+		for (int i = 0; i < 3; ++i) {
+			for (int j = 0; j < 3; ++j) {
+				Vector3 cross = axesA[i].cross(axesB[j]);
 				float magSq = cross.magnitudeSquared();
 				if (magSq > 0.001f) {
 					testAxes[axisCount++] = cross * (1.0f / std::sqrt(magSq));
@@ -171,99 +287,88 @@ private:
 			}
 		}
 
-
 		float minOverlap = FLT_MAX;
 		Vector3 collisionNormal = Vector3(0, 0, 0);
+		int bestAxisIndex = -1;
 
-		for (size_t i = 0; i < axisCount; i++) {
+		for (int i = 0; i < axisCount; ++i) {
 			Vector3 axis = testAxes[i];
-
+			if (axis.magnitudeSquared() < 0.0001f) continue;
 
 			Projection pA = project(boxA, axis);
 			Projection pB = project(boxB, axis);
 
-
-			if (projectionOverlap(pA, pB) == false) {
-				std::cout << "SAT: Separating axis found, no collision" << std::endl;
+			if (!projectionOverlap(pA, pB)) {
 				return;
 			}
 
 			float overlap = getOverlap(pA, pB);
-			std::cout << "SAT:   Overlap amount: " << overlap << std::endl;
-
 			if (overlap < minOverlap) {
 				minOverlap = overlap;
 				collisionNormal = axis;
+				bestAxisIndex = i;
 			}
 		}
 
-		std::cout << "SAT: Final minimum overlap: " << minOverlap << std::endl;
-		std::cout << "SAT: Collision normal: (" << collisionNormal.x << ", "
-			<< collisionNormal.y << ", " << collisionNormal.z << ")" << std::endl;
+		if (bestAxisIndex == -1) {
+			return;
+		}
+
 
 		Vector3 dir = boxB->position - boxA->position;
 		if (dir.dot(collisionNormal) < 0.0f) {
 			collisionNormal = collisionNormal * -1.0f;
 		}
 
-		BoundingBox* boxShapeB = (BoundingBox*)boxB->shape;
-		const Matrix3x3& rotB = boxB->rotationMatrix;
-		const Vector3& centerB = boxB->position;
-		const Vector3& halfExtentsB = boxShapeB->halfExtents;
+		CollisionManifold manifold(boxA, boxB, collisionNormal, minOverlap);
 
-		Vector3 verticesB_local[8];
-		verticesB_local[0].x = halfExtentsB.x;
-		verticesB_local[0].y = halfExtentsB.y;
-		verticesB_local[0].z = halfExtentsB.z;
+		if (bestAxisIndex < 6) {
+			RigidBody* refBody = (bestAxisIndex < 3) ? boxA : boxB;
+			RigidBody* incBody = (bestAxisIndex < 3) ? boxB : boxA;
+			Vector3 refNormal = (bestAxisIndex < 3) ? collisionNormal : collisionNormal * -1.0f;
 
-		verticesB_local[1].x = -halfExtentsB.x;
-		verticesB_local[1].y = halfExtentsB.y;
-		verticesB_local[1].z = halfExtentsB.z;
+			int incFaceIndex = findBestFace(incBody, refNormal * -1.0f);
+			Face incFace = getBoxFace(incBody, incFaceIndex);
 
-		verticesB_local[2].x = halfExtentsB.x;
-		verticesB_local[2].y = -halfExtentsB.y;
-		verticesB_local[2].z = halfExtentsB.z;
+			int refFaceIndex = findBestFace(refBody, refNormal);
+			Face refFace = getBoxFace(refBody, refFaceIndex);
 
-		verticesB_local[3].x = halfExtentsB.x;
-		verticesB_local[3].y = halfExtentsB.y;
-		verticesB_local[3].z = -halfExtentsB.z;
+			std::vector<Vector3> clippedVertices = incFace.vertices;
 
-		verticesB_local[4].x = -halfExtentsB.x;
-		verticesB_local[4].y = -halfExtentsB.y;
-		verticesB_local[4].z = halfExtentsB.z;
+			for (int side = 0; side < 4; ++side) {
+				Vector3 edgeStart = refFace.vertices[side];
+				Vector3 edgeEnd = refFace.vertices[(side + 1) % 4];
+				Vector3 edgeDir = edgeEnd - edgeStart;
+				Vector3 sidePlaneNormal = edgeDir.cross(refNormal).normalized();
+				float sidePlaneDist = sidePlaneNormal.dot(edgeStart);
 
-		verticesB_local[5].x = -halfExtentsB.x;
-		verticesB_local[5].y = halfExtentsB.y;
-		verticesB_local[5].z = -halfExtentsB.z;
+				clippedVertices = clipPolygonAgainstPlane(clippedVertices, sidePlaneNormal, sidePlaneDist);
+				if (clippedVertices.size() < 3) break;
+			}
 
-		verticesB_local[6].x = halfExtentsB.x;
-		verticesB_local[6].y = -halfExtentsB.y;
-		verticesB_local[6].z = -halfExtentsB.z;
 
-		verticesB_local[7].x = -halfExtentsB.x;
-		verticesB_local[7].y = -halfExtentsB.y;
-		verticesB_local[7].z = -halfExtentsB.z;
+			float refPlaneDist = refNormal.dot(refFace.vertices[0]);
+			for (const Vector3& vertex : clippedVertices) {
+				float distToRefPlane = refNormal.dot(vertex) - refPlaneDist;
+				if (distToRefPlane <= 0.01f && distToRefPlane >= -minOverlap * 1.01f) {
+					manifold.addContactPoint(vertex);
+				}
+			}
 
-		float maxPenetration = -FLT_MAX;
-		Vector3 contactPoint = centerB;
-
-		for (auto i : verticesB_local) {
-			Vector3 vertexB_world = rotB.transform(i) + centerB;
-			float vertexPenetration = (boxA->position - vertexB_world).dot(collisionNormal);
-
-			if (vertexPenetration > maxPenetration) {
-				maxPenetration = vertexPenetration;
-				contactPoint = vertexB_world;
+			if (manifold.numContactPoints == 0) {
+				Vector3 contactPoint = (boxA->position + boxB->position) * 0.5f;
+				manifold.addContactPoint(contactPoint);
 			}
 		}
+		else {
+			// TODO: Implement proper Edge-Edge closest points calculation.
+			Vector3 contactPoint = (boxA->position + boxB->position) * 0.5f;
+			manifold.addContactPoint(contactPoint);
+		}
 
-		CollisionManifold manifold(boxA, boxB, collisionNormal, minOverlap);
-		manifold.addContactPoint(contactPoint);
-		collisions.push_back(manifold);
-
-		// Vector3 contactPoint = (boxA->position + boxB->position) * 0.5f;
-		//
-		// collisions.push_back(CollisionManifold(boxA, boxB, collisionNormal, minOverlap, contactPoint));
+		if (manifold.numContactPoints > 0) {
+			collisions.push_back(manifold);
+		}
 	}
 
 	static float clamp(float value, float minVal, float maxVal) {
@@ -306,93 +411,122 @@ private:
 	}
 
 	void resolveCollisions() {
-		for (auto manifold : collisions) {
+		for (auto& manifold : collisions) {
 			if (manifold.numContactPoints == 0) {
 				continue;
 			}
 
-			auto* A = manifold.bodyA;
-			auto* B = manifold.bodyB;
+			RigidBody* A = manifold.bodyA;
+			RigidBody* B = manifold.bodyB;
 
-			// note: wake up check start
+			if ((!A->isAwake && A->inverseMass == 0.0f) && (!B->isAwake && B->inverseMass == 0.0f)) {
+				continue;
+			}
+
+
 			bool bodyAWasAsleep = !A->isAwake;
 			bool bodyBWasAsleep = !B->isAwake;
-			if (bodyAWasAsleep or bodyBWasAsleep) {
-				Vector3 relVel = B->velocity - A->velocity;
-				if (relVel.magnitudeSquared() > sleepEpsilonSq) {
-					if (bodyAWasAsleep and A->inverseMass > 0.0f)
-						A->setAwake(true);
-					if (bodyBWasAsleep and B->inverseMass > 0.0f)
-						B->setAwake(true);
+			if (bodyAWasAsleep || bodyBWasAsleep) {
+				Vector3 initialRelVel = B->velocity - A->velocity;
+				if (initialRelVel.magnitudeSquared() > sleepEpsilonSq * 4.0f) {
+					if (bodyAWasAsleep && A->inverseMass > 0.0f) A->setAwake(true);
+					if (bodyBWasAsleep && B->inverseMass > 0.0f) B->setAwake(true);
+					bodyAWasAsleep = !A->isAwake;
+					bodyBWasAsleep = !B->isAwake;
 				}
 			}
-			// note: wake up check ends here
 
-			// note: skipping resolution if A and B are both asleep
-			if ((!A->isAwake and B->inverseMass == 0.0f) and (!B->isAwake and B->inverseMass == 0.0f))
-				continue;
+			float staticFriction = (A->staticFriction + B->staticFriction) * 0.5f;
+			float dynamicFriction = (A->dynamicFriction + B->dynamicFriction) * 0.5f;
+
 			float totalImpulseMagnitudeSq = 0.0f;
-			float totalMagnitudeSq = 0.0f;
+
 			for (int i = 0; i < manifold.numContactPoints; i++) {
 				Vector3 contactPoint = manifold.contactPoints[i];
 				Vector3 rA = contactPoint - A->position;
 				Vector3 rB = contactPoint - B->position;
-				Vector3 velA = A->velocity + A->angularVelocity.cross(rA);
-				Vector3 velB = B->velocity + B->angularVelocity.cross(rB);
 				Vector3 normal = manifold.contactNormal;
-				float penetration = manifold.penetrationDepth;
-				float velAlongNormal = (velB - velA).dot(manifold.contactNormal);
-				if (velAlongNormal > 0.0f) {
-					continue;
-				}
 
+				Vector3 velA_pre = A->velocity + A->angularVelocity.cross(rA);
+				Vector3 velB_pre = B->velocity + B->angularVelocity.cross(rB);
+				Vector3 relVel_pre = velB_pre - velA_pre;
+				float velAlongNormal = relVel_pre.dot(normal);
+
+				float restitutionBias = 0.0f;
 				float e = std::min(A->restitution, B->restitution);
+				float j_n = 0.0f;
 
-				Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(manifold.contactNormal))).cross(rA);
-				Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(manifold.contactNormal))).cross(rB);
+				if (velAlongNormal < -restitutionBias) {
+					Vector3 termA = (A->inverseInertiaTensor.transform(rA.cross(normal))).cross(rA);
+					Vector3 termB = (B->inverseInertiaTensor.transform(rB.cross(normal))).cross(rB);
+					float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(normal);
 
-				float j = -(1.0f + e) * velAlongNormal;
-				float denominator = A->inverseMass + B->inverseMass + (termA + termB).dot(manifold.contactNormal);
+					if (denominator > 0.0001f) {
+						j_n = -(1.0f + e) * velAlongNormal / denominator;
 
-				if (denominator <= 0.0f) {
-					continue;
+						Vector3 impulseN = normal * j_n;
+						A->velocity -= impulseN * A->inverseMass;
+						B->velocity += impulseN * B->inverseMass;
+						A->angularVelocity += A->inverseInertiaTensor.transform(rA.cross(impulseN) * -1.0f);
+						B->angularVelocity += B->inverseInertiaTensor.transform(rB.cross(impulseN));
+
+						totalImpulseMagnitudeSq += impulseN.magnitudeSquared();
+					}
 				}
 
-				Vector3 impulse = normal * j;
-				A->velocity -= impulse * A->inverseMass;
-				B->velocity += impulse * B->inverseMass;
+				Vector3 velA_post = A->velocity + A->angularVelocity.cross(rA);
+				Vector3 velB_post = B->velocity + B->angularVelocity.cross(rB);
+				Vector3 relVel_post = velB_post - velA_post;
 
-				Vector3 torqueImpulseA = rA.cross(impulse) * -1.0f;
-				Vector3 torqueImpulseB = rB.cross(impulse);
+				Vector3 tangentVel = relVel_post - normal * relVel_post.dot(normal);
+				float tangentSpeedSq = tangentVel.magnitudeSquared();
 
-				A->angularVelocity += A->inverseInertiaTensor.transform(torqueImpulseA);
-				B->angularVelocity += B->inverseInertiaTensor.transform(torqueImpulseB);
+				if (tangentSpeedSq > 0.0001f) {
+					Vector3 tangentDir = tangentVel / std::sqrt(tangentSpeedSq);
 
-				totalImpulseMagnitudeSq += impulse.magnitudeSquared();
+					Vector3 termA_t = (A->inverseInertiaTensor.transform(rA.cross(tangentDir))).cross(rA);
+					Vector3 termB_t = (B->inverseInertiaTensor.transform(rB.cross(tangentDir))).cross(rB);
+					float denominator_t = A->inverseMass + B->inverseMass + (termA_t + termB_t).dot(tangentDir);
+
+					if (denominator_t > 0.0001f) {
+						float jt_mag_needed = -relVel_post.dot(tangentDir) / denominator_t;
+
+						float frictionLimit = staticFriction * std::abs(j_n);
+						float jt_mag_clamped = std::max(-frictionLimit, std::min(jt_mag_needed, frictionLimit));
+
+						Vector3 impulseT = tangentDir * jt_mag_clamped;
+						A->velocity -= impulseT * A->inverseMass;
+						B->velocity += impulseT * B->inverseMass;
+						A->angularVelocity += A->inverseInertiaTensor.transform(rA.cross(impulseT) * -1.0f);
+						B->angularVelocity += B->inverseInertiaTensor.transform(rB.cross(impulseT));
+
+						totalImpulseMagnitudeSq += impulseT.magnitudeSquared();
+					}
+				}
 			}
 
-			if ((bodyAWasAsleep or bodyBWasAsleep) and (totalImpulseMagnitudeSq > wakeImpulseThresholdSq)) {
-				if (bodyAWasAsleep and A->inverseMass > 0.0f) {
+			if ((bodyAWasAsleep || bodyBWasAsleep) && (totalImpulseMagnitudeSq > wakeImpulseThresholdSq)) {
+				if (bodyAWasAsleep && A->inverseMass > 0.0f) {
 					A->setAwake(true);
 				}
-				if (bodyBWasAsleep and B->inverseMass > 0.0f) {
+				if (bodyBWasAsleep && B->inverseMass > 0.0f) {
 					B->setAwake(true);
 				}
 			}
-
-			if (A->isAwake or B->isAwake) {
+			if (A->isAwake || B->isAwake) {
 				const float totalInverseMass = A->inverseMass + B->inverseMass;
-				if (totalInverseMass <= 0.0f) {
-					continue;
+				if (totalInverseMass > 0.0f) {
+					const float percent = 0.3f;
+					const float slop = 0.01f;
+					Vector3 correction = manifold.contactNormal * (std::max(manifold.penetrationDepth - slop, 0.0f) /
+						totalInverseMass) * percent;
+
+					A->position -= correction * A->inverseMass;
+					B->position += correction * B->inverseMass;
+
+					A->updateWorldAABB();
+					B->updateWorldAABB();
 				}
-
-				const float percent = 0.2f;
-				const float slop = 0.01f;
-				Vector3 correction = manifold.contactNormal * (std::max(manifold.penetrationDepth - slop, 0.0f) /
-					totalInverseMass) * percent;
-
-				A->position -= correction * A->inverseMass;
-				B->position += correction * B->inverseMass;
 			}
 		}
 	}
